@@ -13,8 +13,9 @@ class YZDDatasetConfig(tfds.core.BuilderConfig):
     #     这我不太知道...这能放sample_id吗？
     name: str = ''  # task_name
     split: str = ''
-    sample_id_list = list()
+    sample_id_savepath: str = ''
     seed: int = 0
+    max_iteration: int = 0
     sourcegraph_dir: str = ''
     dataset_savedir: Union[None, str] = None
     if_sync: bool = False
@@ -89,7 +90,7 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
             info = tfds.core.DatasetInfo(builder=self)
             info.read_from_directory(self.data_dir)
             return info
-        sampler = self._dataset_sampler()
+        sampler, _ = self._dataset_sampler()
         sampled_data = sampler.next(batch_size=1)
         unpacked_fb = unpack_feedback(sampled_data)
         data = {k: dataset._correct_axis_filtering(v, 0, k)
@@ -110,24 +111,29 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(
             self,
             dl_manager: tfds.download.DownloadManager,
-    ) -> Dict[tfds.Split.splits_lib.Split, tfds.Split.split_builder_lib.SplitGenerator]:
+    ):
         return {self._builder_config.split: self._generate_examples()}
 
     def _dataset_sampler(self):
-        sampler, _ = yzd_samplers.build_yzd_sampler(task_name=self.builder_config.task_name,
-                                                    sample_id_list=self.builder_config.sample_id_list,
+        sample_id_list = []
+        with open(self.builder_config.sample_id_savepath) as sample_id_reader:
+            for line in sample_id_reader.readlines():
+                sample_id_list.append(line.strip())
+        sampler, _ = yzd_samplers.build_yzd_sampler(task_name=self.builder_config.name,
+                                                    sample_id_list=sample_id_list,
                                                     seed=self.builder_config.seed,
                                                     sample_loader=yzd_utils.SampleLoader(
                                                         sample_path_processor=yzd_utils.SamplePathProcessor(
                                                             sourcegraph_dir=self.builder_config.sourcegraph_dir,
-                                                            dataset_savedir=self.builder_config.dataset_savedir)))
-        return sampler
+                                                            dataset_savedir=self.builder_config.dataset_savedir),
+                                                        max_iteration=self.builder_config.max_iteration))
+        return sampler, len(sample_id_list)
 
     def _generate_examples(self):
         task_name = self.builder_config.name
         split_name = self.builder_config.split
-        num_samples = len(self.builder_config.sample_id_list)
-        sampler = self._dataset_sampler()
+        # num_samples = len(self.builder_config.sample_id_list)
+        sampler, num_samples = self._dataset_sampler()
         for sample_idx in range(num_samples):
             # 其实我这里的和CLRSDataset产生的样本类型是不一样的
             # 我的是Feedback，它的看上去是把Feedback给unpack成一个dict了
@@ -139,14 +145,17 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
 
 
 if __name__ == '__main__':
-    sample_id_list = ['poj104_103.12003.4', 'poj104_103.12005.2', 'poj104_103.12009.0', 'poj104_103.12014.7',
-                      'poj104_103.12016.4']
+    # sample_id_list = ['poj104_103.12003.4', 'poj104_103.12005.2', 'poj104_103.12009.0', 'poj104_103.12014.7',
+    #                   'poj104_103.12016.4']
+    sample_id_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/test_sample_id.txt'
     test_config = YZDDatasetConfig(name='yzd_liveness',
                                    split='train',
-                                   sample_id_list=sample_id_list,
+                                   sample_id_savepath=sample_id_savepath,
                                    seed=0,
+                                   max_iteration=5,
                                    sourcegraph_dir='/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/programl_downloaded/',
                                    dataset_savedir=None,
                                    if_sync=False,
                                    if_idx_reorganized=True,
                                    if_save=False)
+    test_dataset = YZDDataset(config=test_config)

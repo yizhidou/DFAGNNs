@@ -41,7 +41,7 @@ class ParamsParser:
 class SamplePathProcessor:
     def __init__(self, sourcegraph_dir: str,
                  dataset_savedir: Union[None, str] = None):
-        if not os.path.isdir(sourcegraph_dir) or not os.path.isdir(dataset_savedir):
+        if not os.path.isdir(sourcegraph_dir):
             # YZDTODO raise an error
             pass
         self.sourcegraph_dir = sourcegraph_dir
@@ -78,7 +78,6 @@ class SamplePathProcessor:
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
                  max_iteration: int,
-                 seed: int,
                  if_sync: bool = False,
                  if_idx_reorganized: bool = True,
                  if_save=False

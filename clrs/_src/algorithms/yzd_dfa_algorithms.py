@@ -4,15 +4,6 @@ from clrs._src import yzd_utils
 from clrs._src import yzd_specs, specs
 from clrs._src import probing
 
-# YZDTODO 后面需要解决params_savepath从哪里来的问题，还有max_iteration
-params = yzd_utils.ParamsParser(params_savepath='')
-
-yzd_sample_path_processor = yzd_utils.SamplePathProcessor(sourcegraph_dir=params.sourcegraph_dir,
-                                                          dataset_savedir=params.dataset_savedir)
-yzd_sample_loader = yzd_utils.SampleLoader(sample_path_processor=yzd_sample_path_processor,
-                                           max_iteration=params.max_iteration)
-
-
 def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
                  sample_id: str):
     trace_list, array_list = yzd_sample_loader.load_a_sample(task_name='yzd_liveness',
