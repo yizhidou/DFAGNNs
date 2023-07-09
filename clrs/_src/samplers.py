@@ -107,7 +107,7 @@ class Sampler(abc.ABC):
                     assert dp.data.shape[1] == 1  # batching axis
                     if dp.data.shape[0] > self.max_steps:
                         self.max_steps = dp.data.shape[0]
-        else:
+        elif num_samples > 0:
             logging.info('Creating a dataset with %i samples.', num_samples)
             (self._inputs, self._outputs, self._hints,
              self._lengths) = self._make_batch(num_samples, spec, 0, algorithm, *args,

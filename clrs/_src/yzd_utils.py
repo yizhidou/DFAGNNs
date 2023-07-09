@@ -49,6 +49,7 @@ class SamplePathProcessor:
 
     def sourcegraph_savepath(self, sample_id):
         # YZDTODO  这里没有写完
+        print(f'sample_id = {sample_id}')
         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
 
     def _trace_savedir(self, task_name):
@@ -134,17 +135,17 @@ class SampleLoader:
 
         # sample_statistics = dict()
         end_idx_be, byte_str_be = _get_a_line(star_idx=0)
-        print(f'line be is: {byte_str_be}; end_idx = {end_idx_be}')
+        # print(f'line be is: {byte_str_be}; end_idx = {end_idx_be}')
         end_idx_pp, byte_str_pp = _get_a_line(star_idx=end_idx_be)
-        print(f'line pp is: {byte_str_pp}; end_idx = {end_idx_pp}')
+        # print(f'line pp is: {byte_str_pp}; end_idx = {end_idx_pp}')
         end_idx_ip, byte_str_ip = _get_a_line(star_idx=end_idx_pp)
-        print(f'line ip is: {byte_str_ip}; end_idx = {end_idx_ip}')
+        # print(f'line ip is: {byte_str_ip}; end_idx = {end_idx_ip}')
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
-        print(f'line it is: {byte_str_it}; end_idx = {end_idx_it}')
+        # print(f'line it is: {byte_str_it}; end_idx = {end_idx_it}')
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
-        print(f'line be du: {byte_str_du}; end_idx = {end_idx_du}')
+        # print(f'line be du: {byte_str_du}; end_idx = {end_idx_du}')
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
-        print(f'line size is: {byte_str_edge_size}; end_idx = {end_idx_edge_size}')
+        # print(f'line size is: {byte_str_edge_size}; end_idx = {end_idx_edge_size}')
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
@@ -180,9 +181,11 @@ class SampleLoader:
     def _load_edge_from_str(self, task_name: Union[str, bytes], edges_str):
         edges_saved_matrix = np.fromstring(edges_str, sep=' ', dtype=int)
         if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-            edges_saved_matrix.reshape((-1, 3))
+            edges_saved_matrix = edges_saved_matrix.reshape((-1, 3))
+            # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
             num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
             num_node = num_pp + num_ip
+            print(f'num_pp = {num_pp}; num_ip = {num_ip}')
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
@@ -192,12 +195,13 @@ class SampleLoader:
             cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
             gen_array = np.zeros(shape=(num_node, num_node), dtype=int)
             kill_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            cfg_array[cfg_edges[0:], cfg_edges[1:]] = 1
-            gen_array[gen_edges[0:], gen_edges[1:]] = 1
-            kill_array[kill_edges[0:], gen_edges[1:]] = 1
+            # print(f'the shape of cfg_array is: {cfg_array.shape}; the shape of cfg_edges is: {cfg_edges.shape}')
+            cfg_array[cfg_edges[:, 0], cfg_edges[:, 1]] = 1
+            gen_array[gen_edges[:, 0], gen_edges[:, 1]] = 1
+            kill_array[kill_edges[:, 0], kill_edges[:, 1]] = 1
             return [cfg_array, gen_array, kill_array]
         else:
-            edges_saved_matrix.reshape((-1, 2))
+            edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
             num_node = edges_saved_matrix[0, 0]
             cfg_source = edges_saved_matrix[1:, 0]
             cfg_target = edges_saved_matrix[1:, 1]

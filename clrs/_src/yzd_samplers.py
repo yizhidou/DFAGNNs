@@ -8,6 +8,7 @@ from programl.proto import *
 import random
 
 Spec = yzd_specs.Spec
+Features = samplers.Features
 Feedback = samplers.Feedback
 
 
@@ -22,20 +23,22 @@ class YZDSampler(samplers.Sampler):
                  ):
         if not task_name in ['yzd_liveness', 'yzd_dominance', 'yzd_reachability']:
             raise NotImplementedError(f'No implementation of algorithm {task_name}.')
-        # YZDTODO 但是现在有一个问题就是*args和**kwargs都没有指定，这俩参数在_sample_data的时候需要用
+        self.sample_id_list = sample_id_list
+        self.task_name = task_name
+        self.sample_loader = sample_loader
+        self.max_steps = self.sample_loader.max_iteration
+
         samplers.Sampler.__init__(self,
                                   algorithm=getattr(algorithms, task_name),
                                   spec=yzd_specs.YZDSPECS[task_name],
                                   num_samples=-1,  #
                                   seed=seed,
                                   if_estimate_max_step=False)
-        self.sample_id_list = sample_id_list
-        self.task_name = task_name
-        self.sample_loader = sample_loader
-        self.max_steps = self.sample_loader.max_iteration
 
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
-        sample_id = random.sample(population=self.sample_id_list, k=1)
+        # print(f'sample_id_list = {self.sample_id_list}')
+        sample_id = random.choice(seq=self.sample_id_list)
+        # print(f'randomly selected sample_id = {sample_id}')
         # YZDTODO 在这里应该过滤一下，用max_steps/num_node之类的指标。也许会用一个统计数据去过滤，也许直接用这里的结果进行过滤
         return self.sample_loader, sample_id
 
@@ -63,8 +66,9 @@ class YZDSampler(samplers.Sampler):
             logging.warning('Increasing hint lengh from %i to %i',
                             self.max_steps, hints[0].data.shape[0])
             self.max_steps = hints[0].data.shape[0]
+        features = Features(inputs, hints, lengths)
 
-        return Feedback(Features(inputs, hints, lengths), outputs)
+        return Feedback(features=features, outputs=outputs)
 
 
 def build_yzd_sampler(task_name: str,
@@ -81,5 +85,6 @@ def build_yzd_sampler(task_name: str,
     sampler = YZDSampler(task_name=task_name,
                          sample_id_list=sample_id_list,
                          seed=seed,
-                         sample_loader=sample_loader)
+                         sample_loader=sample_loader,
+                         )
     return sampler, spec

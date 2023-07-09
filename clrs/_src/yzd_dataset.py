@@ -90,11 +90,12 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
             info = tfds.core.DatasetInfo(builder=self)
             info.read_from_directory(self.data_dir)
             return info
-        sampler, _ = self._dataset_sampler()
+        sampler, _ = self.sampler_and_num_samples()
         sampled_data = sampler.next(batch_size=1)
+        print('in _info method~')
         unpacked_fb = unpack_feedback(sampled_data)
         data = {k: dataset._correct_axis_filtering(v, 0, k)
-                for k, v in unpacked_fb}
+                for k, v in unpacked_fb.items()}
         data_info = {
             k: tfds.features.Tensor(shape=v.shape, dtype=tf.dtypes.as_dtype(
                 v.dtype)) for k, v in data.items()}
@@ -103,18 +104,13 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
             features=tfds.features.FeaturesDict(data_info),
         )
 
-    def get_sample_ids_split(self, sample_id_savepath) -> Iterator[str]:
-        with open(sample_id_savepath) as file_reader:
-            for line in file_reader.readlines():
-                yield line.strip()
-
     def _split_generators(
             self,
             dl_manager: tfds.download.DownloadManager,
     ):
         return {self._builder_config.split: self._generate_examples()}
 
-    def _dataset_sampler(self):
+    def sampler_and_num_samples(self):
         sample_id_list = []
         with open(self.builder_config.sample_id_savepath) as sample_id_reader:
             for line in sample_id_reader.readlines():
@@ -126,15 +122,14 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
                                                         sample_path_processor=yzd_utils.SamplePathProcessor(
                                                             sourcegraph_dir=self.builder_config.sourcegraph_dir,
                                                             dataset_savedir=self.builder_config.dataset_savedir),
-                                                        max_iteration=self.builder_config.max_iteration))
+                                                        max_iteration=self.builder_config.max_iteration),
+                                                    )
         return sampler, len(sample_id_list)
 
     def _generate_examples(self):
-        task_name = self.builder_config.name
-        split_name = self.builder_config.split
-        # num_samples = len(self.builder_config.sample_id_list)
-        sampler, num_samples = self._dataset_sampler()
+        sampler, num_samples = self.sampler_and_num_samples()
         for sample_idx in range(num_samples):
+            print(f'generating a sample; its idx is {sample_idx}; num_samples = {num_samples}')
             # 其实我这里的和CLRSDataset产生的样本类型是不一样的
             # 我的是Feedback，它的看上去是把Feedback给unpack成一个dict了
             sampled_data = sampler.next(batch_size=1)
