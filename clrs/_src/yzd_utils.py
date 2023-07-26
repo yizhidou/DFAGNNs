@@ -1,11 +1,35 @@
-from typing import List, Union
-import os
+from typing import List, Union, Dict
+import os, json
 import numpy as np
 from programl.proto import *
 import programl
 
 _Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
+
+
+class YZDExcpetion(Exception):
+    # the current sample has been previously recognized as errored
+    RECORDED_ERRORED_SAMPLE = 1
+    # newly recognized error sample
+    NEWLY_ERRORED_SAMPLE = 2
+
+    def __init__(self, error_code: int,
+                 sample_id: Union[str, None] = None):
+        self.error_code = error_code
+        self.sample_id = sample_id
+        super().__init__()
+
+    def error_msg(self):
+        if self.error_code == self.RECORDED_ERRORED_SAMPLE:
+            msg = 'This sample has previously been recorded as errored!'
+        elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
+            msg = 'This sample is newly recognized errored, we have now recorded it!'
+        else:
+            msg = 'unrecognized error!'
+        if self.sample_id:
+            msg += f' sample_id: {self.sample_id}'
+        return msg
 
 
 class ParamsParser:
@@ -40,12 +64,23 @@ class ParamsParser:
 
 class SamplePathProcessor:
     def __init__(self, sourcegraph_dir: str,
-                 dataset_savedir: Union[None, str] = None):
+                 errorlog_savepath: str,
+                 dataset_savedir: Union[None, str] = None,
+                 statistics_savepath: Union[None, str] = None):
         if not os.path.isdir(sourcegraph_dir):
             # YZDTODO raise an error
             pass
         self.sourcegraph_dir = sourcegraph_dir
+        self.errored_sample_ids = {}
+        if not os.path.isfile(errorlog_savepath):
+            os.system(f'touch {errorlog_savepath}')
+        else:
+            with open(errorlog_savepath) as errored_reader:
+                for line in errored_reader.readlines():
+                    self.errored_sample_ids[line.strip()] = 1
+        self.errorlog_savepath = errorlog_savepath
         self.dataset_savedir = dataset_savedir
+        self.statistics_savepath = statistics_savepath
 
     def sourcegraph_savepath(self, sample_id):
         # YZDTODO  这里没有写完
@@ -81,8 +116,7 @@ class SampleLoader:
                  max_iteration: int,
                  if_sync: bool = False,
                  if_idx_reorganized: bool = True,
-                 if_save=False
-                 ):
+                 if_save=False):
         self.sample_path_processor = sample_path_processor
         self.max_iteration = max_iteration
         self.if_sync = if_sync
@@ -90,8 +124,19 @@ class SampleLoader:
         self.if_save = if_save
         if not self.sample_path_processor.dataset_savedir:
             self.if_save = False
+        if self.sample_path_processor.statistics_savepath:
+            if not os.path.isfile(self.sample_path_processor.statistics_savepath):
+                os.system(f'touch {self.sample_path_processor.statistics_savepath}')
+                self.statistics_dict = {}
+            elif os.path.getsize(self.sample_path_processor.statistics_savepath) == 0:
+                self.statistics_dict = {}
+            else:
+                with open(self.sample_path_processor.statistics_savepath) as log_reader:
+                    self.statistics_dict = json.load(log_reader)
 
     def load_a_sample(self, task_name, sample_id):
+        if sample_id in self.sample_path_processor.errored_sample_ids:
+            raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
         if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
             trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
             with open(trace_savepath, 'rb') as result_reader:
@@ -112,12 +157,29 @@ class SampleLoader:
                                                          task_name, sample_id) if self.if_save else None,
                                                      if_sync=self.if_sync,
                                                      if_idx_reorganized=self.if_idx_reorganized)
-            #     YZDTODO  这里应该加错误logging
-            assert len(cpperror) == 0
-            edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
+            if len(cpperror) > 0:
+                self.sample_path_processor.errored_sample_ids[sample_id] = 1
+                with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
+                    error_sample_writer.write(sample_id+'\n')
+                raise YZDExcpetion(YZDExcpetion.NEWLY_ERRORED_SAMPLE, sample_id)
+            sample_statistics, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
+            if self.sample_path_processor.statistics_savepath:
+                self._merge_statistics(sample_id, sample_statistics)
             trace_list = self._load_trace_from_bytes(task_name, trace_chunck)
             array_list = self._load_edge_from_str(task_name, edge_chunck)
         return trace_list, array_list
+
+    def _merge_statistics(self, sample_id, new_statistics: Dict):
+        if not sample_id in self.statistics_dict:
+            self.statistics_dict[sample_id] = new_statistics
+        else:
+            for k, v in new_statistics.items():
+                if not k in self.statistics_dict[sample_id]:
+                    self.statistics_dict[sample_id][k] = v
+
+    def log_statistics_to_file(self):
+        with open(self.sample_path_processor.statistics_savepath, 'w') as writer:
+            json.dump(self.statistics_dict, writer, indent=3)
 
     def _parse_cpp_stdout(self, cpp_out: bytes):
         def _get_a_line(star_idx: int):
@@ -131,17 +193,29 @@ class SampleLoader:
 
         def _parse_a_line(line: bytes):
             task_name_in_byte, item_name_in_byte, num = line.split(b' ')
-            return task_name_in_byte, item_name_in_byte, int(num.decode())
+            return str(task_name_in_byte, 'utf-8'), str(item_name_in_byte, 'utf-8'), int(num)
 
-        # sample_statistics = dict()
+        sample_statistics = dict()
         end_idx_be, byte_str_be = _get_a_line(star_idx=0)
+        task_name, _, num_be = _parse_a_line(byte_str_be)
+        if task_name == 'yzd_dominance':
+            sample_statistics['num_be(forward)'] = num_be
+        else:
+            assert task_name == 'yzd_liveness' or task_name == 'yzd_reachability'
+            sample_statistics['num_be(backward)'] = num_be
         # print(f'line be is: {byte_str_be}; end_idx = {end_idx_be}')
         end_idx_pp, byte_str_pp = _get_a_line(star_idx=end_idx_be)
         # print(f'line pp is: {byte_str_pp}; end_idx = {end_idx_pp}')
+        _, _, num_pp = _parse_a_line(byte_str_pp)
+        sample_statistics['num_pp'] = num_pp
         end_idx_ip, byte_str_ip = _get_a_line(star_idx=end_idx_pp)
         # print(f'line ip is: {byte_str_ip}; end_idx = {end_idx_ip}')
+        _, _, num_ip = _parse_a_line(byte_str_ip)
+        sample_statistics['num_ip'] = num_ip
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
         # print(f'line it is: {byte_str_it}; end_idx = {end_idx_it}')
+        _, item_name, num_iteration = _parse_a_line(byte_str_it)
+        sample_statistics[f'{item_name}_{task_name}'] = num_iteration
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
         # print(f'line be du: {byte_str_du}; end_idx = {end_idx_du}')
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
@@ -149,7 +223,7 @@ class SampleLoader:
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
-        return edge_chunck, trace_chunck
+        return sample_statistics, edge_chunck, trace_chunck
 
     def _load_trace_from_bytes(self, task_name: Union[str, bytes], trace_bytes: bytes):
         result_obj = ResultsEveryIteration()
@@ -185,7 +259,7 @@ class SampleLoader:
             # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
             num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
             num_node = num_pp + num_ip
-            print(f'num_pp = {num_pp}; num_ip = {num_ip}')
+            print(f'num_pp = {num_pp}; num_ip = {num_ip}; total = {num_pp + num_ip}')
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]

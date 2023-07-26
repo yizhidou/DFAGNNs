@@ -140,8 +140,8 @@ class YZDDataset(tfds.core.GeneratorBasedBuilder):
 
 
 if __name__ == '__main__':
-    # sample_id_list = ['poj104_103.12003.4', 'poj104_103.12005.2', 'poj104_103.12009.0', 'poj104_103.12014.7',
-    #                   'poj104_103.12016.4']
+    sample_id_list = ['poj104_103.12003.4', 'poj104_103.12005.2', 'poj104_103.12009.0', 'poj104_103.12014.7',
+                      'poj104_103.12016.4']
     sample_id_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/test_sample_id.txt'
     test_config = YZDDatasetConfig(name='yzd_liveness',
                                    split='train',
