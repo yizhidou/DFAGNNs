@@ -132,9 +132,6 @@ class Sampler(abc.ABC):
 
         # Batch and pad trajectories to max(T).
         inputs = _batch_io(inputs)
-        print('in _make_batch (sampler.py)')
-        for prob_idx in range(len(inputs)):
-            print(f'the name of the probe: {inputs[prob_idx].name}; the shape of this probe: {inputs[prob_idx].data.shape}')
         outputs = _batch_io(outputs)
         hints, lengths = _batch_hints(hints, min_length)
         return inputs, outputs, hints, lengths

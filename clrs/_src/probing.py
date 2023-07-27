@@ -39,9 +39,9 @@ _Stage = specs.Stage
 _Type = specs.Type
 _OutputClass = specs.OutputClass
 
-_ArraySparse = collections.namedtuple('ArraySparse', ['edges', 'nb_nodes', 'nb_edges'])
-_ArrayDense = np.ndarray
-_Array = Union[_ArrayDense, _ArraySparse]
+# _ArraySparse = collections.namedtuple('ArraySparse', ['edges', 'nb_nodes', 'nb_edges'])
+_Array = np.ndarray
+# _Array = Union[_ArrayDense, _ArraySparse]
 _Data = Union[_Array, List[_Array]]
 _DataOrType = Union[_Data, str]
 
@@ -144,46 +144,16 @@ def finalize(probes: ProbesDict):
     for stage in [_Stage.INPUT, _Stage.OUTPUT, _Stage.HINT]:
         for loc in [_Location.NODE, _Location.EDGE, _Location.GRAPH]:
             for name in probes[stage][loc]:
-                if isinstance(probes[stage][loc][name]['data'], _ArraySparse) or isinstance(
-                        probes[stage][loc][name]['data'], _ArrayDense):
+                if isinstance(probes[stage][loc][name]['data'], _Array):
                     raise ProbeError('Attemping to re-finalize a finalized `ProbesDict`.')
                 if stage == _Stage.HINT:
                     # Hints are provided for each timestep. Stack them here.
-                    if loc == _Location.EDGE:
-                        edges_list = []
-                        nb_edges_list = []
-                        nb_nodes = probes[stage][loc][name]['data'][0].nb_nodes
-                        for hint_idx, dp in enumerate(probes[stage][loc][name]['data']):
-                            assert len(dp.edges.shape) == 2 and dp.edges.shape[-1] == 2
-                            edges_list.append(dp.edges)
-                            assert isinstance(dp.nb_edges, int)
-                            nb_edges_list.append(dp.nb_edges)
-                            assert dp.nb_nodes == nb_nodes
-                        probes[stage][loc][name]['data'] = _ArraySparse(edges=np.concatenate(edges_list, axis=0),
-                                                                        # [nb_edges_total, 2]
-                                                                        nb_nodes=nb_nodes,
-                                                                        nb_edges=np.expand_dims(np.array(nb_edges_list),
-                                                                                                # [1, hint_len]
-                                                                                                0))
-
-                    else:
-                        probes[stage][loc][name]['data'] = np.stack(
-                            probes[stage][loc][name]['data'])
+                    probes[stage][loc][name]['data'] = np.stack(
+                        probes[stage][loc][name]['data'])
                 else:
                     # Only one instance of input/output exist. Remove leading axis.
-                    assert len(probes[stage][loc][name]['data']) == 1
-                    if loc == _Location.EDGE:
-                        assert isinstance(probes[stage][loc][name]['data'][0], _ArraySparse)
-                        probes[stage][loc][name]['data'] = _ArraySparse(edges=probes[stage][loc][name]['data'].edges,
-                                                                        nb_nodes=probes[stage][loc][name][
-                                                                            'data'].nb_nodes,
-                                                                        nb_edges=np.array(  # [1, 1]
-                                                                            [[probes[stage][loc][name][
-                                                                                  'data'].nb_edges]]))
-                    else:
-                        assert isinstance(probes[stage][loc][name]['data'][0], _ArrayDense)
-                        probes[stage][loc][name]['data'] = np.squeeze(
-                            np.array(probes[stage][loc][name]['data']))
+                    probes[stage][loc][name]['data'] = np.squeeze(
+                        np.array(probes[stage][loc][name]['data']))
 
 
 def split_stages(
@@ -213,8 +183,7 @@ def split_stages(
             raise ProbeError(f'Probe {name} of incorrect type {t}.')
 
         data = probes[stage][loc][name]['data']
-        if not isinstance(probes[stage][loc][name]['data'], _ArraySparse) and not isinstance(
-                probes[stage][loc][name]['data'], _ArrayDense):
+        if not isinstance(probes[stage][loc][name]['data'], _Array):
             raise ProbeError((f'Invalid `data` for probe "{name}". ' +
                               'Did you forget to call `probing.finalize`?'))
 
@@ -227,14 +196,9 @@ def split_stages(
                      ] and not np.all(np.sum(np.abs(data), -1) == 1):
                 raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
 
-        # 如果是dense才扩展
-        if isinstance(probes[stage][loc][name]['data'], _ArrayDense):
-            dim_to_expand = 1 if stage == _Stage.HINT else 0
-            data_point = DataPoint(name=name, location=loc, type_=t,
-                                   data=np.expand_dims(data, dim_to_expand))
-        else:
-            assert isinstance(probes[stage][loc][name]['data'], _ArraySparse)
-            data_point = probes[stage][loc][name]['data']
+        dim_to_expand = 1 if stage == _Stage.HINT else 0
+        data_point = DataPoint(name=name, location=loc, type_=t,
+                               data=np.expand_dims(data, dim_to_expand))
 
         if stage == _Stage.INPUT:
             inputs.append(data_point)
