@@ -81,7 +81,7 @@ class YZDSampler(samplers.Sampler):
         sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
         return inputs, outputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
 
-    def next(self, batch_size: Optional[int] = None) -> Feedback:
+    def next(self, batch_size: Optional[int] = None) -> YZDFeedback:
         """Subsamples trajectories from the pre-generated dataset.
 
         Args:
@@ -106,8 +106,11 @@ class YZDSampler(samplers.Sampler):
                             self.max_steps, hints[0].data.shape[0])
             self.max_steps = hints[0].data.shape[0]
 
-        features = Features(inputs=inputs, hints=hints, lengths=lengths)
-        return Feedback(features=features, outputs=outputs)
+        dense_features = DenseFeatures(inputs=inputs, hints=hints, lengths=lengths)
+        sparse_featrures = SparseFeatures(sparse_inputs=sparse_inputs, sparse_hints=sparse_hints,
+                                          sparse_lengths=sparse_lengths)
+        return YZDFeedback(dense_features=dense_features, dense_outputs=outputs,
+                           sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
 
 
 def build_yzd_sampler(task_name: str,

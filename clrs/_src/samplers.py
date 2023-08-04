@@ -136,7 +136,8 @@ class Sampler(abc.ABC):
         hints, lengths = _batch_hints(hints, min_length)
         return inputs, outputs, hints, lengths
 
-    def next(self, batch_size: Optional[int] = None) -> Feedback:
+    def next(self, batch_size: Optional[int] = None):
+        # -> Feedback
         """Subsamples trajectories from the pre-generated dataset.
 
         Args:
