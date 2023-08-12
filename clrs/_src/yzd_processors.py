@@ -112,7 +112,7 @@ class PGNSparse(PGN):
                  node_fts: _Array,  # [N, hidden_dim]
                  edge_fts: _Array,  # [E, hidden_dim]
                  graph_fts: _Array,  # [B, hidden_dim]
-                 adj_mat: _Array,
+                 # adj_mat: _Array,
                  hidden: _Array,
                  row_indices,  # [E, ]
                  col_indices,

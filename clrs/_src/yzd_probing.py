@@ -1,4 +1,10 @@
-from clrs._src.probing import *
+from clrs._src import probing
+from clrs._src import specs
+import collections
+import numpy as np
+from typing import Dict, List, Tuple, Union
+import jax
+import attr
 
 _Location = specs.Location
 _Stage = specs.Stage
@@ -6,6 +12,57 @@ _Type = specs.Type
 _ArraySparse = collections.namedtuple('ArraySparse', ['edges', 'nb_nodes', 'nb_edges'])
 _ArrayDense = np.ndarray
 _Array = Union[_ArrayDense, _ArraySparse]
+_Data = Union[_Array, List[_Array]]
+_DataOrType = Union[_Data, str]
+
+ProbesDict = Dict[
+    str, Dict[str, Dict[str, Dict[str, _DataOrType]]]]
+
+ProbeError = probing.ProbeError
+
+# First anotation makes this object jax.jit/pmap friendly, second one makes this
+# tf.data.Datasets friendly.
+@jax.tree_util.register_pytree_node_class
+@attr.define
+class DataPoint:
+    """Describes a data point."""
+
+    _name: str
+    _location: str
+    _type_: str
+    data: _Array
+
+    @property
+    def name(self):
+        return probing._convert_to_str(self._name)
+
+    @property
+    def location(self):
+        return probing._convert_to_str(self._location)
+
+    @property
+    def type_(self):
+        return probing._convert_to_str(self._type_)
+
+    def __repr__(self):
+        s = f'DataPoint(name="{self.name}",\tlocation={self.location},\t'
+        if isinstance(self.data, _ArraySparse):
+            s += f'data=ArrarySparse(nb_nodes={sum(self.data.nb_nodes)}))\t'
+        else:
+            assert isinstance(self.data, _ArrayDense)
+            s += f'data=ArrayDense({self.data.shape}))'
+        return s
+
+    def tree_flatten(self):
+        data = (self.data,)
+        meta = (self.name, self.location, self.type_)
+        return data, meta
+
+    @classmethod
+    def tree_unflatten(cls, meta, data):
+        name, location, type_ = meta
+        subdata, = data
+        return DataPoint(name, location, type_, subdata)
 
 
 def yzd_finalize(probes: ProbesDict):
