@@ -46,9 +46,10 @@ class YZDSampler(samplers.Sampler):
         sample_id = random.choice(seq=self.sample_id_list)
         # print(f'randomly selected sample_id = {sample_id}')
         # YZDTODO 在这里应该过滤一下，用max_steps/num_node之类的指标。也许会用一个统计数据去过滤，也许直接用这里的结果进行过滤
-        return self.sample_loader, sample_id
+        return sample_id
 
-    def _make_batch(self, num_samples: int, spec: Spec, min_length: int,
+    def _make_batch(self, num_samples: int,
+                    spec: Spec, min_length: int,
                     algorithm: samplers.Algorithm, *args, **kwargs):
         """Generate a batch of data."""
         inputs = []
@@ -58,9 +59,14 @@ class YZDSampler(samplers.Sampler):
         sparse_outputs = []
         sparse_hints = []
 
-        for _ in range(num_samples):
-            data = self._sample_data(*args, **kwargs)
-            _, probes = algorithm(*data)
+        num_created_samples = 0
+        while num_created_samples < num_samples:
+            sample_id = self._sample_data(*args, **kwargs)
+            try:
+                _, probes = algorithm(self.sample_loader, sample_id)
+            except yzd_utils.YZDExcpetion:
+                continue
+            num_created_samples += 1
             inp, outp, hint, s_inp, s_outp, s_hint = yzd_probing.yzd_split_stages(probes, spec)
             inputs.append(inp)
             outputs.append(outp)
