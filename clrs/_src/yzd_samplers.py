@@ -15,7 +15,17 @@ Spec = yzd_specs.Spec
 DenseFeatures = samplers.Features
 SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
 YZDFeedback = collections.namedtuple('YZDFeedback',
-                                     ['dense_features', 'dense_outputs', 'sparse_features', 'sparse_outputs'])
+                                     ['dense_features',
+                                      # 'dense_outputs',
+                                      'sparse_features',
+                                      'sparse_outputs'])
+
+_ArraySparse = yzd_probing._ArraySparse
+_ArrayDense = yzd_probing._ArrayDense
+_Array = yzd_probing._Array
+_DataPoint = yzd_probing.DataPoint
+Trajectory = List[_DataPoint]
+Trajectories = List[Trajectory]
 
 
 class YZDSampler(samplers.Sampler):
@@ -33,6 +43,7 @@ class YZDSampler(samplers.Sampler):
         self.task_name = task_name
         self.sample_loader = sample_loader
         self.max_steps = self.sample_loader.max_iteration
+        self.max_num_pp = self.sample_loader.max_num_pp
 
         samplers.Sampler.__init__(self,
                                   algorithm=getattr(algorithms, task_name),
@@ -45,7 +56,6 @@ class YZDSampler(samplers.Sampler):
         # print(f'sample_id_list = {self.sample_id_list}')
         sample_id = random.choice(seq=self.sample_id_list)
         # print(f'randomly selected sample_id = {sample_id}')
-        # YZDTODO 在这里应该过滤一下，用max_steps/num_node之类的指标。也许会用一个统计数据去过滤，也许直接用这里的结果进行过滤
         return sample_id
 
     def _make_batch(self, num_samples: int,
@@ -53,7 +63,7 @@ class YZDSampler(samplers.Sampler):
                     algorithm: samplers.Algorithm, *args, **kwargs):
         """Generate a batch of data."""
         inputs = []
-        outputs = []
+        # outputs = []
         hints = []
         sparse_inputs = []
         sparse_outputs = []
@@ -67,9 +77,9 @@ class YZDSampler(samplers.Sampler):
             except yzd_utils.YZDExcpetion:
                 continue
             num_created_samples += 1
-            inp, outp, hint, s_inp, s_outp, s_hint = yzd_probing.yzd_split_stages(probes, spec)
+            inp, hint, s_inp, s_outp, s_hint = yzd_probing.yzd_split_stages(probes, spec)
             inputs.append(inp)
-            outputs.append(outp)
+            # outputs.append(outp)  # this should be empty
             hints.append(hint)
             sparse_inputs.append(s_inp)
             sparse_outputs.append(s_outp)
@@ -79,13 +89,13 @@ class YZDSampler(samplers.Sampler):
 
         # Batch and pad trajectories to max(T).
         inputs = samplers._batch_io(inputs)
-        outputs = samplers._batch_io(outputs)
+        # outputs = samplers._batch_io(outputs)
         hints, lengths = samplers._batch_hints(hints, min_length)
 
         sparse_inputs = _batch_io_sparse(sparse_inputs)
         sparse_outputs = _batch_io_sparse(sparse_outputs)
         sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
-        return inputs, outputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
+        return inputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
 
     def next(self, batch_size: Optional[int] = None) -> YZDFeedback:
         """Subsamples trajectories from the pre-generated dataset.
@@ -99,7 +109,7 @@ class YZDSampler(samplers.Sampler):
         if not batch_size:
             # YZDTODO should raise an error
             batch_size = 1
-        inputs, outputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths = self._make_batch(
+        inputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,
             min_length=self.max_steps,
@@ -115,7 +125,8 @@ class YZDSampler(samplers.Sampler):
         dense_features = DenseFeatures(inputs=inputs, hints=hints, lengths=lengths)
         sparse_featrures = SparseFeatures(sparse_inputs=sparse_inputs, sparse_hints=sparse_hints,
                                           sparse_lengths=sparse_lengths)
-        return YZDFeedback(dense_features=dense_features, dense_outputs=outputs,
+        return YZDFeedback(dense_features=dense_features,
+                           # dense_outputs=outputs,
                            sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
 
 
@@ -138,21 +149,29 @@ def build_yzd_sampler(task_name: str,
     return sampler, spec
 
 
-def _batch_io_sparse(sparse_dp_list: Trajectory):
-    assert sparse_dp_list
-    dp_name = sparse_dp_list[0].name
-    batch_size = len(sparse_dp_list)
+def _batch_io_sparse(sparse_io_traj_list: Trajectories):
+    assert sparse_io_traj_list
+    batched_sparse_io_list = []
+    for sparse_io_traj in sparse_io_traj_list:
+        batched_sparse_io_list.append(_batch_io_sparse_one_probe(sparse_io_traj))
+    return batched_sparse_io_list
+
+
+def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
+    assert sparse_io_traj
+    dp_name = sparse_io_traj[0].name
+    batch_size = len(sparse_io_traj)
     edges_list = []
     nb_nodes_list_with_0 = [0]
     nb_edges_list = []
-    for idx, dp in enumerate(sparse_dp_list):
-        assert isinstance(dp, probing._ArraySparse)
+    for idx, dp in enumerate(sparse_io_traj):
+        assert isinstance(dp, _ArraySparse)
         assert dp.name == dp_name
         assert isinstance(dp.data.nb_nodes, int)
         nb_nodes_list_with_0.append(dp.data.nb_nodes)
         assert dp.data.nb_edges.shape[0] == 1 and dp.data.nb_edges.shape[1] == 1
         nb_edges_list.append(dp.data.nb_edges)
-        edges_list.append(dp.data.edges)
+        edges_list.append(dp.data.edge_indices_with_optional_content)
     cumsum = np.cumsum(nb_nodes_list_with_0)
     edges_batched = np.concatenate(edges_list, axis=0)
     nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
@@ -160,21 +179,32 @@ def _batch_io_sparse(sparse_dp_list: Trajectory):
     indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
     scattered = cumsum[indices]
     edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    return probing._ArraySparse(edges=edges_batched, nb_nodes=nb_nodes_batched, nb_edges=nb_edges_batched)
+    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                        nb_nodes=nb_nodes_batched,
+                        nb_edges=nb_edges_batched)
 
 
-def _batch_hints_sparse(sparse_dp_list: Trajectory,
-                        min_steps: int):
-    assert sparse_dp_list
+def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
+    assert sparse_hint_traj_list
+    batched_sparse_hint_list = []
+    for sparse_hints_traj in sparse_hint_traj_list:
+        batched_sparse_hint_list.append(_batch_hints_sparse_one_probe(sparse_hint_traj=sparse_hints_traj,
+                                                                      min_steps=min_steps))
+    return batched_sparse_hint_list
+
+
+def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
+                                  min_steps: int):
+    assert sparse_hint_traj
     max_steps = min_steps
-    batch_size = len(sparse_dp_list)
-    dp_name = sparse_dp_list[0].name
+    batch_size = len(sparse_hint_traj)
+    dp_name = sparse_hint_traj[0].name
     hint_lengths_list = []
     edges_list = []
     nb_nodes_list_with_0 = [0]
-    for dp in sparse_dp_list:
+    for dp in sparse_hint_traj:
         assert dp.name == dp_name
-        assert isinstance(dp.data, probing._ArraySparse)
+        assert isinstance(dp.data, _ArraySparse)
         assert isinstance(dp.data.nb_nodes, int)
         nb_nodes_list_with_0.append(dp.data.nb_nodes)
         assert dp.data.nb_edges.shape[0] == 1
@@ -182,17 +212,19 @@ def _batch_hints_sparse(sparse_dp_list: Trajectory,
         if hint_len > max_steps:
             max_steps = hint_len
         hint_lengths_list.append(hint_len)
-        edges_list.append(dp.data.edges)
+        edges_list.append(dp.data.edge_indices_with_optional_content)
     cumsum = np.cumsum(nb_nodes_list_with_0)
     edges_batched = np.concatenate(edges_list, axis=0)
     nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
 
     nb_edges_batched = np.zeros((batch_size, max_steps))
-    for idx, dp in enumerate(sparse_dp_list):
+    for idx, dp in enumerate(sparse_hint_traj):
         nb_edges_batched[idx][:dp.data.nb_edges.shape[1]] = dp.data.nb_edges[0]
 
     indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
     scattered = cumsum[indices]
     edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    return probing._ArraySparse(edges=edges_batched, nb_nodes=nb_nodes_batched, nb_edges=nb_edges_batched), np.array(
-        hint_lengths_list)
+    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                        nb_nodes=nb_nodes_batched,
+                        nb_edges=nb_edges_batched), \
+           np.array(hint_lengths_list)

@@ -84,12 +84,7 @@ class DataPoint:
 
     def __repr__(self):
         s = f'DataPoint(name="{self.name}",\tlocation={self.location},\t'
-        if isinstance(self.data, _ArraySparse):
-            s += f'data=ArrarySparse(nb_nodes={sum(self.data.nb_nodes)}))\t'
-        else:
-            assert isinstance(self.data, _ArrayDense)
-            s += f'data=ArrayDense({self.data.shape}))'
-        return s
+        return s + f'type={self.type_},\tdata=Array{self.data.shape})'
 
     def tree_flatten(self):
         data = (self.data,)
@@ -131,8 +126,7 @@ def push(probes: ProbesDict, stage: str, next_probe):
         for name in probes[stage][loc]:
             if name not in next_probe:
                 raise ProbeError(f'Missing probe for {name}.')
-            if isinstance(probes[stage][loc][name]['data'], _ArraySparse) or isinstance(
-                    probes[stage][loc][name]['data'], _ArrayDense):
+            if isinstance(probes[stage][loc][name]['data'], _Array):
                 raise ProbeError('Attemping to push to finalized `ProbesDict`.')
             # Pytype thinks initialize() returns a ProbesDict with a str for all final
             # values instead of _DataOrType.

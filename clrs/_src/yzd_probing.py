@@ -9,7 +9,9 @@ import attr
 _Location = specs.Location
 _Stage = specs.Stage
 _Type = specs.Type
-_ArraySparse = collections.namedtuple('ArraySparse', ['edges', 'nb_nodes', 'nb_edges'])
+_ArraySparse = collections.namedtuple('ArraySparse', ['edge_indices_with_optional_content',
+                                                      'nb_nodes',
+                                                      'nb_edges'])
 _ArrayDense = np.ndarray
 _Array = Union[_ArrayDense, _ArraySparse]
 _Data = Union[_Array, List[_Array]]
@@ -19,6 +21,7 @@ ProbesDict = Dict[
     str, Dict[str, Dict[str, Dict[str, _DataOrType]]]]
 
 ProbeError = probing.ProbeError
+
 
 # First anotation makes this object jax.jit/pmap friendly, second one makes this
 # tf.data.Datasets friendly.
@@ -65,8 +68,24 @@ class DataPoint:
         return DataPoint(name, location, type_, subdata)
 
 
+def yzd_push(probes: ProbesDict, stage: str, next_probe):
+    """Pushes a probe into an existing `ProbesDict`."""
+    for loc in [_Location.NODE, _Location.EDGE, _Location.GRAPH]:
+        for name in probes[stage][loc]:
+            if name not in next_probe:
+                raise ProbeError(f'Missing probe for {name}.')
+            if isinstance(probes[stage][loc][name]['data'], _ArraySparse) or isinstance(
+                    probes[stage][loc][name]['data'], _ArrayDense):
+                raise ProbeError('Attemping to push to finalized `ProbesDict`.')
+            # Pytype thinks initialize() returns a ProbesDict with a str for all final
+            # values instead of _DataOrType.
+            probes[stage][loc][name]['data'].append(next_probe[name])  # pytype: disable=attribute-error
+
+
 def yzd_finalize(probes: ProbesDict):
     """Finalizes a `ProbesDict` by stacking/squeezing `data` field."""
+    # 把ProbesDict给整理一下: 属于HINT的probe给stack成一个dense array或者合并成一个sparse array;
+    # 不属于HINT的probe每个单独成为一个dense array或者sparse array
     for stage in [_Stage.INPUT, _Stage.OUTPUT, _Stage.HINT]:
         for loc in [_Location.NODE, _Location.EDGE, _Location.GRAPH]:
             for name in probes[stage][loc]:
@@ -76,21 +95,28 @@ def yzd_finalize(probes: ProbesDict):
                 if stage == _Stage.HINT:
                     # Hints are provided for each timestep. Stack them here.
                     if loc == _Location.EDGE:
-                        edges_list = []
+                        edge_indices_with_optional_content_list = []
                         nb_edges_list = []
                         nb_nodes = probes[stage][loc][name]['data'][0].nb_nodes
                         for hint_idx, dp in enumerate(probes[stage][loc][name]['data']):
-                            assert len(dp.edges.shape) == 2 and dp.edges.shape[-1] == 2
-                            edges_list.append(dp.edges)
+                            assert isinstance(dp, _ArraySparse)
+                            assert dp.edge_indices_with_optional_content.ndim == 2
+                            if name == 'cfg_sparse':
+                                assert dp.edge_indices_with_optional_content.shape[-1] == 2
+                            else:
+                                assert dp.edge_indices_with_optional_content.shape[-1] == 3
+                            edge_indices_with_optional_content_list.append(dp.edge_indices_with_optional_content)
                             assert isinstance(dp.nb_edges, int)
                             nb_edges_list.append(dp.nb_edges)
                             assert dp.nb_nodes == nb_nodes
-                        probes[stage][loc][name]['data'] = _ArraySparse(edges=np.concatenate(edges_list, axis=0),
-                                                                        # [nb_edges_total, 2]
-                                                                        nb_nodes=nb_nodes,
-                                                                        nb_edges=np.expand_dims(np.array(nb_edges_list),
-                                                                                                0)  # [1, hint_len]
-                                                                        )
+                        probes[stage][loc][name]['data'] = _ArraySparse(
+                            edge_indices_with_optional_content=np.concatenate(edge_indices_with_optional_content_list,
+                                                                              axis=0),
+                            # [nb_edges_total, 2 or 3]
+                            nb_nodes=nb_nodes,
+                            nb_edges=np.expand_dims(np.array(nb_edges_list),
+                                                    0)  # [1, hint_len]
+                        )
 
                     else:
                         probes[stage][loc][name]['data'] = np.stack(
@@ -100,13 +126,15 @@ def yzd_finalize(probes: ProbesDict):
                     assert len(probes[stage][loc][name]['data']) == 1
                     if loc == _Location.EDGE:
                         assert isinstance(probes[stage][loc][name]['data'][0], _ArraySparse)
-                        probes[stage][loc][name]['data'] = _ArraySparse(edges=probes[stage][loc][name]['data'].edges,
-                                                                        nb_nodes=probes[stage][loc][name][
-                                                                            'data'].nb_nodes,
-                                                                        nb_edges=np.array([[probes[stage][loc][name][
-                                                                                                'data'].nb_edges]])
-                                                                        # [1, 1]
-                                                                        )
+                        probes[stage][loc][name]['data'] = _ArraySparse(
+                            edge_indices_with_optional_content=probes[stage][loc][name][
+                                'data'][0].edge_indices_with_optional_content,
+                            nb_nodes=probes[stage][loc][name][
+                                'data'][0].nb_nodes,
+                            nb_edges=np.array([[probes[stage][loc][name][
+                                                    'data'][0].nb_edges]])
+                            # [1, 1]
+                            )
                     else:
                         assert isinstance(probes[stage][loc][name]['data'][0], _ArrayDense)
                         probes[stage][loc][name]['data'] = np.squeeze(
@@ -118,7 +146,7 @@ def yzd_split_stages(probes: ProbesDict,
     """Splits contents of `ProbesDict` into `DataPoint`s by stage."""
 
     inputs = []
-    outputs = []
+    # outputs = []
     hints = []
 
     sparse_inputs = []
@@ -156,18 +184,7 @@ def yzd_split_stages(probes: ProbesDict,
                      ] and not np.all(np.sum(np.abs(data), -1) == 1):
                 raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
 
-        # 如果是dense才扩展
-        if isinstance(probes[stage][loc][name]['data'], _ArrayDense):
-            dim_to_expand = 1 if stage == _Stage.HINT else 0
-            data_point = DataPoint(name=name, location=loc, type_=t,
-                                   data=np.expand_dims(data, dim_to_expand))
-            if stage == _Stage.INPUT:
-                inputs.append(data_point)
-            elif stage == _Stage.OUTPUT:
-                outputs.append(data_point)
-            else:
-                hints.append(data_point)
-        else:
+        if loc == _Location.EDGE:
             assert isinstance(probes[stage][loc][name]['data'], _ArraySparse)
             data_point = probes[stage][loc][name]['data']
             if stage == _Stage.INPUT:
@@ -176,6 +193,18 @@ def yzd_split_stages(probes: ProbesDict,
                 sparse_outputs.append(data_point)
             else:
                 sparse_hints.append(data_point)
+        else:   # 如果是dense才进行扩展
+            isinstance(probes[stage][loc][name]['data'], _ArrayDense)
+            dim_to_expand = 1 if stage == _Stage.HINT else 0
+            data_point = DataPoint(name=name, location=loc, type_=t,
+                                   data=np.expand_dims(data, dim_to_expand))
+            if stage == _Stage.INPUT:
+                inputs.append(data_point)
+            elif stage == _Stage.OUTPUT:
+                # outputs.append(data_point)
+                raise ProbeError('In YZDDFATasks, there is not any dense output probe.')
+            else:
+                hints.append(data_point)
 
-    return inputs, outputs, hints, sparse_inputs, sparse_outputs, sparse_hints
+    return inputs, hints, sparse_inputs, sparse_outputs, sparse_hints
 # pylint: disable=invalid-name

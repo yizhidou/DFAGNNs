@@ -2,7 +2,7 @@ import numpy as np
 
 from clrs._src import yzd_utils
 from clrs._src import yzd_specs, specs
-from clrs._src import probing
+from clrs._src import yzd_probing, probing
 
 
 def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
@@ -14,26 +14,26 @@ def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
     cfg_sparse, gen_sparse, kill_sparse = array_list
     num_nodes = if_pp.shape[0]
     probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_liveness'])
-    probing.push(probes,
-                 specs.Stage.INPUT,
-                 next_probe={
-                     'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
-                     'cfg_sparse': cfg_sparse,
-                     'gen_sparse': gen_sparse,
-                     'kill_sparse': kill_sparse,
-                     'trace_i_sparse': trace_list[0]})
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.INPUT,
+                         next_probe={
+                             'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
+                             'cfg_sparse': cfg_sparse,
+                             'gen_sparse': gen_sparse,
+                             'kill_sparse': kill_sparse,
+                             'trace_i_sparse': trace_list[0]})
     for time_idx in range(1, len(trace_list) - 1):
-        probing.push(probes,
-                     specs.Stage.HINT,
-                     next_probe={
-                         'trace_h_sparse': trace_list[time_idx],
-                         'time': time_idx
-                     }
-                     )
-    probing.push(probes,
-                 specs.Stage.OUTPUT,
-                 next_probe={'trace_o_sparse': trace_list[-1]})
-    probing.finalize(probes)
+        yzd_probing.yzd_push(probes,
+                             specs.Stage.HINT,
+                             next_probe={
+                                 'trace_h_sparse': trace_list[time_idx],
+                                 'time': time_idx
+                             }
+                             )
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.OUTPUT,
+                         next_probe={'trace_o_sparse': trace_list[-1]})
+    yzd_probing.yzd_finalize(probes)
     return None, probes
 
 
@@ -45,26 +45,26 @@ def yzd_dominance(yzd_sample_loader: yzd_utils.SampleLoader,
     cfg_sparse, gen_sparse = array_list
     num_nodes = if_pp.shape[0]
     probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_dominance'])
-    probing.push(probes,
-                 specs.Stage.INPUT,
-                 next_probe={
-                     'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
-                     'cfg_sparse': cfg_sparse,
-                     'gen_sparse': gen_sparse,
-                     'trace_i_sparse': trace_list[0]
-                 })
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.INPUT,
+                         next_probe={
+                             'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
+                             'cfg_sparse': cfg_sparse,
+                             'gen_sparse': gen_sparse,
+                             'trace_i_sparse': trace_list[0]
+                         })
     for time_idx in range(1, len(trace_list) - 1):
-        probing.push(probes,
-                     specs.Stage.HINT,
-                     next_probe={
-                         'trace_h_sparse': trace_list[time_idx],
-                         'time': time_idx
-                     }
-                     )
-    probing.push(probes,
-                 specs.Stage.OUTPUT,
-                 next_probe={'trace_o_sparse': trace_list[-1]})
-    probing.finalize(probes)
+        yzd_probing.yzd_push(probes,
+                             specs.Stage.HINT,
+                             next_probe={
+                                 'trace_h_sparse': trace_list[time_idx],
+                                 'time': time_idx
+                             }
+                             )
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.OUTPUT,
+                         next_probe={'trace_o_sparse': trace_list[-1]})
+    yzd_probing.yzd_finalize(probes)
     return None, probes
 
 
@@ -76,26 +76,26 @@ def yzd_reachability(yzd_sample_loader: yzd_utils.SampleLoader,
     cfg_sparse, gen_sparse = array_list
     num_nodes = if_pp.shape[0]
     probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_reachability'])
-    probing.push(probes,
-                 specs.Stage.INPUT,
-                 next_probe={
-                     'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
-                     'cfg_sparse': cfg_sparse,
-                     'gen_sparse': gen_sparse,
-                     'trace_i_sparse': trace_list[0]
-                 })
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.INPUT,
+                         next_probe={
+                             'pos': np.copy(np.arange(num_nodes)) * 1.0 / num_nodes,
+                             'cfg_sparse': cfg_sparse,
+                             'gen_sparse': gen_sparse,
+                             'trace_i_sparse': trace_list[0]
+                         })
     for time_idx in range(1, len(trace_list) - 1):
-        probing.push(probes,
-                     specs.Stage.HINT,
-                     next_probe={
-                         'trace_h_sparse': trace_list[time_idx],
-                         'time': time_idx
-                     }
-                     )
-    probing.push(probes,
-                 specs.Stage.OUTPUT,
-                 next_probe={'trace_o_sparse': trace_list[-1]})
-    probing.finalize(probes)
+        yzd_probing.yzd_push(probes,
+                             specs.Stage.HINT,
+                             next_probe={
+                                 'trace_h_sparse': trace_list[time_idx],
+                                 'time': time_idx
+                             }
+                             )
+    yzd_probing.yzd_push(probes,
+                         specs.Stage.OUTPUT,
+                         next_probe={'trace_o_sparse': trace_list[-1]})
+    yzd_probing.yzd_finalize(probes)
     return None, probes
 
 
