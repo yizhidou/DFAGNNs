@@ -12,13 +12,15 @@ import numpy as np
 import collections
 
 Spec = yzd_specs.Spec
-DenseFeatures = samplers.Features
-SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
-YZDFeedback = collections.namedtuple('YZDFeedback',
-                                     ['dense_features',
-                                      # 'dense_outputs',
-                                      'sparse_features',
-                                      'sparse_outputs'])
+Features = samplers.Features
+Feedback = samplers.Feedback
+# DenseFeatures = samplers.Features
+# SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
+# YZDFeedback = collections.namedtuple('YZDFeedback',
+#                                      ['dense_features',
+#                                       # 'dense_outputs',
+#                                       'sparse_features',
+#                                       'sparse_outputs'])
 
 _ArraySparse = yzd_probing._ArraySparse
 _ArrayDense = yzd_probing._ArrayDense
@@ -97,7 +99,7 @@ class YZDSampler(samplers.Sampler):
         sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
         return inputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
 
-    def next(self, batch_size: Optional[int] = None) -> YZDFeedback:
+    def next(self, batch_size: Optional[int] = None) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
 
         Args:
@@ -114,7 +116,11 @@ class YZDSampler(samplers.Sampler):
             spec=self._spec,
             min_length=self.max_steps,
             algorithm=self._algorithm)
-        # *args, **kwargs 这两在_make_batch里都是_sample_data的输入，我的_sample_data不需要输入，所以这里就不需要
+        assert np.array_equal(lengths, sparse_lengths)
+        if self.task_name == 'yzd_liveness':
+            assert len(inputs) == 3 and len(hints) == 1 and len(sparse_inputs) == 3 and len(sparse_hints) == 1
+        else:
+            assert len(inputs) == 3 and len(hints) == 1 and len(sparse_inputs) == 2 and len(sparse_hints) == 1
 
         # 讲道理在我的情形下这条warning是不应该出现的
         if hints[0].data.shape[0] > self.max_steps:
@@ -122,12 +128,16 @@ class YZDSampler(samplers.Sampler):
                             self.max_steps, hints[0].data.shape[0])
             self.max_steps = hints[0].data.shape[0]
 
-        dense_features = DenseFeatures(inputs=inputs, hints=hints, lengths=lengths)
-        sparse_featrures = SparseFeatures(sparse_inputs=sparse_inputs, sparse_hints=sparse_hints,
-                                          sparse_lengths=sparse_lengths)
-        return YZDFeedback(dense_features=dense_features,
-                           # dense_outputs=outputs,
-                           sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
+        # dense_features = DenseFeatures(inputs=inputs, hints=hints, lengths=lengths)
+        # sparse_featrures = SparseFeatures(sparse_inputs=sparse_inputs, sparse_hints=sparse_hints,
+        #                                   sparse_lengths=sparse_lengths)
+        # return YZDFeedback(dense_features=dense_features,
+        #                    # dense_outputs=outputs,
+        #                    sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
+        return Feedback(features=Features(inputs=inputs + sparse_inputs,
+                                          hints=hints,
+                                          lengths=lengths),
+                        outputs=sparse_outputs)
 
 
 def build_yzd_sampler(task_name: str,
@@ -187,10 +197,12 @@ def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
 def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
     assert sparse_hint_traj_list
     batched_sparse_hint_list = []
+    hint_lengths = []
     for sparse_hints_traj in sparse_hint_traj_list:
-        batched_sparse_hint_list.append(_batch_hints_sparse_one_probe(sparse_hint_traj=sparse_hints_traj,
-                                                                      min_steps=min_steps))
-    return batched_sparse_hint_list
+        batched_sparse_hint_one_probe, hint_len = _batch_hints_sparse_one_probe(sparse_hint_traj=sparse_hints_traj,
+                                                                                min_steps=min_steps)
+        hint_lengths.append(hint_len)
+    return batched_sparse_hint_list, np.array(hint_lengths)
 
 
 def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
@@ -199,7 +211,7 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
     max_steps = min_steps
     batch_size = len(sparse_hint_traj)
     dp_name = sparse_hint_traj[0].name
-    hint_lengths_list = []
+    hint_len_this_probe = sparse_hint_traj[0].data.nb_edges.shape[1]
     edges_list = []
     nb_nodes_list_with_0 = [0]
     for dp in sparse_hint_traj:
@@ -207,11 +219,11 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
         assert isinstance(dp.data, _ArraySparse)
         assert isinstance(dp.data.nb_nodes, int)
         nb_nodes_list_with_0.append(dp.data.nb_nodes)
-        assert dp.data.nb_edges.shape[0] == 1
-        hint_len = dp.data.nb_edges.shape[1]
-        if hint_len > max_steps:
-            max_steps = hint_len
-        hint_lengths_list.append(hint_len)
+        assert dp.data.nb_edges.shape[0] == 1 and dp.data.nb_edges.shape[1] == hint_len_this_probe
+        # hint_len = dp.data.nb_edges.shape[1]
+        # if hint_len > max_steps:
+        #     max_steps = hint_len
+        # hint_lengths_list.append(hint_len)
         edges_list.append(dp.data.edge_indices_with_optional_content)
     cumsum = np.cumsum(nb_nodes_list_with_0)
     edges_batched = np.concatenate(edges_list, axis=0)
@@ -227,4 +239,4 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
     return _ArraySparse(edge_indices_with_optional_content=edges_batched,
                         nb_nodes=nb_nodes_batched,
                         nb_edges=nb_edges_batched), \
-           np.array(hint_lengths_list)
+           hint_len_this_probe
