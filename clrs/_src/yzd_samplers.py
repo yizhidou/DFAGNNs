@@ -9,10 +9,15 @@ from typing import Dict, Any, Callable, List, Optional, Tuple
 from programl.proto import *
 import random
 import numpy as np
+import jax
 import collections
 
 Spec = yzd_specs.Spec
-Features = samplers.Features
+Features = collections.namedtuple('Features', ['dense_inputs',
+                                               'sparse_inputs',
+                                               'dense_hints',
+                                               'sparse_hints',
+                                               'lengths'])
 Feedback = samplers.Feedback
 # DenseFeatures = samplers.Features
 # SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
@@ -134,8 +139,12 @@ class YZDSampler(samplers.Sampler):
         # return YZDFeedback(dense_features=dense_features,
         #                    # dense_outputs=outputs,
         #                    sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
-        return Feedback(features=Features(inputs=inputs + sparse_inputs,
-                                          hints=hints,
+        # feedback_inputs = dict(dense_inputs=inputs, sparse_inputs=sparse_inputs)
+        # feedback_hints = dict(dense_hints=hints, sparse_hints=sparse_hints)
+        return Feedback(features=Features(dense_inputs=inputs,
+                                          sparse_inputs=sparse_inputs,
+                                          dense_hints=hints,
+                                          sparse_hints=sparse_hints,
                                           lengths=lengths),
                         outputs=sparse_outputs)
 
@@ -161,15 +170,19 @@ def build_yzd_sampler(task_name: str,
 
 def _batch_io_sparse(sparse_io_traj_list: Trajectories):
     assert sparse_io_traj_list
-    batched_sparse_io_list = []
-    for sparse_io_traj in sparse_io_traj_list:
-        batched_sparse_io_list.append(_batch_io_sparse_one_probe(sparse_io_traj))
-    return batched_sparse_io_list
+    # batched_sparse_io_list = []
+    # for sparse_io_traj in sparse_io_traj_list:
+    #     batched_sparse_io_list.append(_batch_io_sparse_one_probe(sparse_io_traj))
+    # return batched_sparse_io_list
+    return jax.tree_util.tree_map(lambda *x: _batch_io_sparse_one_probe(x),
+                                  *sparse_io_traj_list)
 
 
 def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
     assert sparse_io_traj
     dp_name = sparse_io_traj[0].name
+    dp_location = sparse_io_traj[0].location
+    dp_type = sparse_io_traj[0].type_
     batch_size = len(sparse_io_traj)
     edges_list = []
     nb_nodes_list_with_0 = [0]
@@ -189,9 +202,13 @@ def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
     indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
     scattered = cumsum[indices]
     edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
-                        nb_nodes=nb_nodes_batched,
-                        nb_edges=nb_edges_batched)
+    batched_io_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                                                     nb_nodes=nb_nodes_batched,
+                                                     nb_edges=nb_edges_batched)
+    return _DataPoint(_name=dp_name,
+                      _location=dp_location,
+                      _type_=dp_type,
+                      data=batched_io_sparse_data_this_probe)
 
 
 def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
@@ -211,6 +228,8 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
     max_steps = min_steps
     batch_size = len(sparse_hint_traj)
     dp_name = sparse_hint_traj[0].name
+    dp_location = sparse_hint_traj[0].location
+    dp_type = sparse_hint_traj[0].type_
     hint_len_this_probe = sparse_hint_traj[0].data.nb_edges.shape[1]
     edges_list = []
     nb_nodes_list_with_0 = [0]
@@ -236,7 +255,12 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
     indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
     scattered = cumsum[indices]
     edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
-                        nb_nodes=nb_nodes_batched,
-                        nb_edges=nb_edges_batched), \
+    batched_hint_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                                                       nb_nodes=nb_nodes_batched,
+                                                       nb_edges=nb_edges_batched)
+
+    return _DataPoint(_name=dp_name,
+                      _location=dp_location,
+                      _type_=dp_type,
+                      data=batched_hint_sparse_data_this_probe), \
            hint_len_this_probe
