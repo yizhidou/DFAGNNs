@@ -14,9 +14,22 @@ _Type = specs.Type
 
 AdjSparse = collections.namedtuple('AdjSparse', ['row_indices', 'col_indices', 'nb_edges_each_graph'])
 
-def accum_adj_and_node_edge_fts(dp: _DataPoint, adj_list: List[_ArrayDense]):
-    if dp.name == 'cfg':
+def get_cfg_edges(sparse_inputs: List[_DataPoint]):
+    for dp in sparse_inputs:
         assert isinstance(dp.data, _ArraySparse)
+        if dp.name == 'cfg_sparse':
+            return dp.data
+    assert False
+
+
+def get_gen_kill_edges(sparse_inputs: List[_DataPoint]):
+    for dp in sparse_inputs:
+        assert isinstance(dp.data, _ArraySparse)
+        if dp.name == 'gen_sparse':
+            gen_sparse = dp.data
+        if dp.name == 'kill_sparse':
+            kill_sparse = dp.data
+    return gen_sparse, kill_sparse
 
 
 

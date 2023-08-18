@@ -14,17 +14,17 @@ class GATSparse(GAT):
             graph_fts: _Array,  # [B, hidden_dim]
             # adj_mat: _Array,
             hidden: _Array,
-            source_indices,  # [E, ]
-            dest_indices,
+            row_indices,  # [E, ]
+            col_indices,
             nb_edges_each_graph,  # [B, ]
     ):
         """GAT inference step (sparse version by yzd)."""
 
         batch_size, _ = graph_fts.shape
         nb_nodes = node_fts.shape[0]
-        nb_edges = source_indices.shape[0]
+        nb_edges = row_indices.shape[0]
         assert nb_edges_each_graph.shape[0] == batch_size
-        assert dest_indices.shape[0] == nb_edges
+        assert col_indices.shape[0] == nb_edges
         assert jnp.sum(nb_edges_each_graph) == nb_edges
         # assert graph_fts.shape[:-1] == (b,)
         # assert adj_mat.shape == (b, n, n)
@@ -46,27 +46,27 @@ class GATSparse(GAT):
         att_2 = a_2(z)  # [N, H]
         att_e = a_e(edge_fts)  # [E, H]
         att_g = a_g(graph_fts)  # [B, H]
-        keys_source = att_1[source_indices]  # [E, H]
-        queries_dest = att_2[dest_indices]  # [E, H]
+        keys_source = att_1[row_indices]  # [E, H]
+        queries_dest = att_2[col_indices]  # [E, H]
         logits = (
-                att_1[source_indices] +  # + [E, H]
-                att_2[dest_indices] +  # + [E, H]
+                att_1[row_indices] +  # + [E, H]
+                att_2[col_indices] +  # + [E, H]
                 att_e +  # + [E, H]
                 jnp.repeat(a=att_g, repeats=nb_edges_each_graph, axis=0)  # + [E, H]
         )  # = [E, H]
         coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(logits),
-                                         segment_ids=dest_indices,
+                                         segment_ids=col_indices,
                                          num_segments=nb_edges)
 
         values = m(z)  # [N, H*F]
         values = jnp.reshape(
             values,
             values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
-        values_source = values[dest_indices]  # [E, H, F]
+        values_source = values[col_indices]  # [E, H, F]
 
         ret = coefs * values_source  # [E, H, F]
         ret = jax.ops.segment_sum(data=ret,
-                                  segment_ids=source_indices,
+                                  segment_ids=row_indices,
                                   num_segments=nb_nodes)  # [N, H, F]
         ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [N, H*F]
 
@@ -158,8 +158,9 @@ class PGNSparse(PGN):
         #         msg_e + jnp.expand_dims(msg_g, axis=(1, 2)))  # [B, N, N, mide_size]
         msgs = (msg_1[row_indices] +  # [E, mide_size]
                 msg_2[col_indices] +  # [E, mide_size]
-                msg_e + jnp.repeat(a=msg_g,
-                                   repeats=nb_edges_each_graph, axis=0))  # [E, mide_size]
+                msg_e +
+                jnp.repeat(a=msg_g,
+                           repeats=nb_edges_each_graph, axis=0))  # [E, mide_size]
 
         if self._msgs_mlp_sizes is not None:
             msgs = hk.nets.MLP(self._msgs_mlp_sizes)(jax.nn.relu(msgs))
@@ -192,10 +193,10 @@ class PGNSparse(PGN):
 
         o1 = hk.Linear(self.out_size)
         o2 = hk.Linear(self.out_size)
-        h_1 = o1(z)     # [N, out_size]
+        h_1 = o1(z)  # [N, out_size]
         h_2 = o2(msgs)  # [N, out_size]
 
-        ret = h_1 + h_2     # [N, out_size]
+        ret = h_1 + h_2  # [N, out_size]
 
         if self.activation is not None:
             ret = self.activation(ret)

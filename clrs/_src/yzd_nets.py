@@ -192,12 +192,14 @@ class YZDNet(nets.Net):
                                                 hard=hard_postprocess)
         if repred and self.decode_hints and not first_step:
             cur_hint = []
-            for hint in decoded_hint:
-                cur_hint.append(decoded_hint[hint])
+            for hint_name in decoded_hint:
+                cur_hint.append(decoded_hint[hint_name])
         else:
-            cur_hint = []
+            cur_dense_hint = []
+            cur_sparse_hint = []
             needs_noise = (self.decode_hints and not first_step and
                            self._hint_teacher_forcing < 1.0)
+
             if needs_noise:
                 # For noisy teacher forcing, choose which examples in the batch to force
                 force_mask = jax.random.bernoulli(
@@ -205,24 +207,25 @@ class YZDNet(nets.Net):
                     (batch_size,))
             else:
                 force_mask = None
-            for hint in hints:
-                hint_data = jnp.asarray(hint.data)[i]
+            for hint in dense_hints:
+                hint_data = jnp.asarray(hint.data)[i]  # YZDTODO: 其实我真的不知道这个i是干嘛的
                 _, loc, typ = spec[hint.name]
+                assert loc == _Location.GRAPH and hint.name == 'time'
                 if needs_noise:
-                    if (typ == _Type.POINTER and
-                            decoded_hint[hint.name].type_ == _Type.SOFT_POINTER):
-                        # When using soft pointers, the decoded hints cannot be summarised
-                        # as indices (as would happen in hard postprocessing), so we need
-                        # to raise the ground-truth hint (potentially used for teacher
-                        # forcing) to its one-hot version.
-                        hint_data = hk.one_hot(hint_data, nb_nodes)
-                        typ = _Type.SOFT_POINTER
-                    hint_data = jnp.where(_expand_to(force_mask, hint_data),
+                    hint_data = jnp.where(nets._expand_to(force_mask, hint_data),
                                           hint_data,
                                           decoded_hint[hint.name].data)
-                cur_hint.append(
+                cur_dense_hint.append(
                     probing.DataPoint(
                         name=hint.name, location=loc, type_=typ, data=hint_data))
+            for sparse_hint in sparse_hints:
+                # sparse_h_data = jnp.asarray(sparse_hint.data)
+                _, loc, typ = spec[sparse_hint.name]
+                assert loc == _Location.EDGE
+                if needs_noise:
+                    force_mask = jnp.repeat(force_mask,
+                                            jnp.sum(sparse_hint.data.nb_edges,
+                                                    axis=-1))
 
         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
             inputs, cur_hint, mp_state.hiddens,
@@ -254,10 +257,102 @@ class YZDNet(nets.Net):
         # the second value is the output that will be stacked over steps.
         return new_mp_state, accum_mp_state
 
+    def _one_step_pred(
+            self,
+            dense_inputs: _Trajectory,
+            sparse_inputs: _Trajectory,
+            dense_hints: _Trajectory,
+            hidden: _Array,
+            batch_size: int,
+            nb_nodes_entire_batch: int,
+            lstm_state: Optional[hk.LSTMState],
+            spec: _Spec,
+            encs: Dict[str, List[hk.Module]],
+            decs: Dict[str, Tuple[hk.Module]],
+            repred: bool,
+    ):
+        """Generates one-step predictions."""
+
+        # Initialise empty node/edge/graph features and adjacency matrix.
+        node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
+        edge_fts = jnp.zeros((batch_size, nb_nodes, nb_nodes, self.hidden_dim))
+        graph_fts = jnp.zeros((batch_size, self.hidden_dim))
+        adj_mat = jnp.repeat(
+            jnp.expand_dims(jnp.eye(nb_nodes), 0), batch_size, axis=0)
+
+        # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Encode node/edge/graph features from inputs and (optionally) hints.
+        dense_trajectories = [dense_inputs]
+        if self.encode_hints:
+            dense_trajectories.append(dense_hints)
+
+        for dense_trajectory in dense_trajectories:
+            for dp in dense_trajectory:
+                try:
+                    dp = encoders.preprocess(dp, nb_nodes)
+                    assert dp.type_ != _Type.SOFT_POINTER
+                    adj_mat = encoders.accum_adj_mat(dp, adj_mat)
+                    encoder = encs[dp.name]
+                    edge_fts = encoders.accum_edge_fts(encoder, dp, edge_fts)
+                    node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
+                    graph_fts = encoders.accum_graph_fts(encoder, dp, graph_fts)
+                except Exception as e:
+                    raise Exception(f'Failed to process {dp}') from e
+
+
+        # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        nxt_hidden = hidden
+        for _ in range(self.nb_msg_passing_steps):
+            nxt_hidden, nxt_edge = self.processor(
+                node_fts,
+                edge_fts,
+                graph_fts,
+                adj_mat,
+                nxt_hidden,
+                batch_size=batch_size,
+                nb_nodes=nb_nodes,
+            )
+
+        if not repred:  # dropout only on training
+            nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
+
+        if self.use_lstm:
+            # lstm doesn't accept multiple batch dimensions (in our case, batch and
+            # nodes), so we vmap over the (first) batch dimension.
+            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(nxt_hidden, lstm_state)
+        else:
+            nxt_lstm_state = None
+
+        h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
+        if nxt_edge is not None:
+            e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
+        else:
+            e_t = edge_fts
+
+        # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Decode features and (optionally) hints.
+        hint_preds, output_preds = decoders.decode_fts(
+            decoders=decs,
+            spec=spec,
+            h_t=h_t,
+            adj_mat=adj_mat,
+            edge_fts=e_t,
+            graph_fts=graph_fts,
+            inf_bias=self.processor.inf_bias,
+            inf_bias_edge=self.processor.inf_bias_edge,
+            repred=repred,
+        )
+
+        return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
+
 
 def _data_dimensions(features: _Features):
     """Returns (batch_size, nb_nodes)."""
     for inp in features.sparse_inputs:
         if inp.location == _Location.EDGE:
-            return (inp.data.nb_nodes.shape[0], jnp.sum(inp.data.nb_nodes))
+            batch_size = inp.data.nb_nodes.shape[0]
+            nb_nodes_entire_batch = jnp.sum(inp.data.nb_nodes)
+            # nb_edges_each_graph = jnp.sum(inp.data.nb_edges, axis=-1)
+            # assert nb_edges_each_graph.shape[0] == batch_size
+            return (batch_size, nb_nodes_entire_batch)
     assert False
