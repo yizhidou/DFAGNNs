@@ -16,12 +16,34 @@ _Type = specs.Type
 AdjSparse = collections.namedtuple('AdjSparse', ['row_indices', 'col_indices', 'nb_edges_each_graph'])
 
 
-def func(sparse_inputs: _Trajactory,
+def func(dense_inputs: _Trajactory,
+         sparse_inputs: _Trajactory,
+         dense_hints: Union[_Trajactory, None] = None,
          sparse_hints: Union[_Trajactory, None] = None):
     result = {}
-    gen_edges = None
+    nb_nodes_entire_batch = None
+    for dp in dense_inputs:
+        assert isinstance(dp.data, _ArrayDense)
+        if dp.name == 'pos':
+            if nb_nodes_entire_batch:
+                assert dp.data.shape[0] == nb_nodes_entire_batch
+            else:
+                nb_nodes_entire_batch = dp.data.shape[0]
+            result['pos_content'] = jnp.array(dp.data)
+        if dp.name == 'if_pp':
+            if nb_nodes_entire_batch:
+                assert dp.data.shape[0] == nb_nodes_entire_batch
+            else:
+                nb_nodes_entire_batch = dp.data.shape[0]
+            result['if_pp_content'] = jnp.array(dp.data)
+        if dp.name == 'if_ip':
+            if nb_nodes_entire_batch:
+                assert dp.data.shape[0] == nb_nodes_entire_batch
+            else:
+                nb_nodes_entire_batch = dp.data.shape[0]
+            result['if_ip_content'] = jnp.array(dp.data)
+
     kill_edges = None
-    trace_i_sparse = None
     for dp in sparse_inputs:
         assert isinstance(dp.data, _ArraySparse)
         if dp.name == 'cfg_sparse':
@@ -29,21 +51,28 @@ def func(sparse_inputs: _Trajactory,
             result['nb_cfg_edges'] = jnp.array(dp.data.nb_edges)
         if dp.name == 'gen_sparse':
             gen_edges = jnp.array(dp.data.edge_indices_with_optional_content[:, :-1])
+            nb_gen_edges = jnp.array(dp.data.nb_edges)
             result['gen_content'] = jnp.array(dp.data.edge_indices_with_optional_content[:, -1])
         if dp.name == 'kill_sparse':
             kill_edges = jnp.array(dp.data.edge_indices_with_optional_content[:, :-1])
+            nb_kill_edges = jnp.array(dp.data.nb_edges)
             result['kill_content'] = jnp.array(dp.data.edge_indices_with_optional_content[:, -1])
         if dp.name == 'trace_i_sparse':
-            trace_edges = jnp.array(dp.data.edge_indices_with_optional_content[:, :-1])
-            result['trace_content'] = jnp.array(dp.data.edge_indices_with_optional_content[:, -1])
-        if gen_edges and kill_edges:
-            assert jnp.array_equal(gen_edges, kill_edges)
-        assert jnp.array_equal(gen_edges, trace_edges)
-        result['kg_edges'] = gen_edges
+            trace_i_edges = jnp.array(dp.data.edge_indices_with_optional_content[:, :-1])
+            result['trace_i_content'] = jnp.array(dp.data.edge_indices_with_optional_content[:, -1])
+    if kill_edges:
+        assert jnp.array_equal(gen_edges, kill_edges)
+        assert jnp.array_equal(nb_gen_edges, nb_kill_edges)
+    assert jnp.array_equal(gen_edges, trace_i_edges)
+    result['kg_edges'] = gen_edges
+    result['nb_kg_edges'] = nb_gen_edges
+
     if sparse_hints:
         assert len(sparse_hints) == 1
-        dp = sparse_hints[0]
         assert sparse_hints[0].name == 'trace_h_sparse'
+        result['trace_h_edges'] = jnp.array(sparse_hints[0].data.edge_indices_with_optional_content[:, :-1])
+        result['nb_trace_h_edges'] = jnp.sum(jnp.array(sparse_hints[0].data.nb_edges),
+                                             axis=-1)
 
 
 def get_gen_kill_edges(sparse_inputs: List[_DataPoint]):
