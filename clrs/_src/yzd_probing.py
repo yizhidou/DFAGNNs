@@ -9,12 +9,12 @@ import attr
 _Location = specs.Location
 _Stage = specs.Stage
 _Type = specs.Type
-_ArraySparse = collections.namedtuple('ArraySparse', ['edge_indices_with_optional_content',
+ArraySparse = collections.namedtuple('ArraySparse', ['edge_indices_with_optional_content',
                                                       'nb_nodes',
                                                       'nb_edges'])
-_ArrayDense = np.ndarray
-_Array = Union[_ArrayDense, _ArraySparse]
-_Data = Union[_Array, List[_Array]]
+ArrayDense = np.ndarray
+Array = Union[ArrayDense, ArraySparse]
+_Data = Union[Array, List[Array]]
 _DataOrType = Union[_Data, str]
 
 ProbesDict = Dict[
@@ -33,7 +33,7 @@ class DataPoint:
     _name: str
     _location: str
     _type_: str
-    data: _Array
+    data: Array
 
     @property
     def name(self):
@@ -49,10 +49,10 @@ class DataPoint:
 
     def __repr__(self):
         s = f'DataPoint(name="{self.name}",\tlocation={self.location},\t'
-        if isinstance(self.data, _ArraySparse):
+        if isinstance(self.data, ArraySparse):
             s += f'data=ArrarySparse(nb_nodes={sum(self.data.nb_nodes)}))\t'
         else:
-            assert isinstance(self.data, _ArrayDense)
+            assert isinstance(self.data, ArrayDense)
             s += f'data=ArrayDense({self.data.shape}))'
         return s
 
@@ -74,8 +74,8 @@ def yzd_push(probes: ProbesDict, stage: str, next_probe):
         for name in probes[stage][loc]:
             if name not in next_probe:
                 raise ProbeError(f'Missing probe for {name}.')
-            if isinstance(probes[stage][loc][name]['data'], _ArraySparse) or isinstance(
-                    probes[stage][loc][name]['data'], _ArrayDense):
+            if isinstance(probes[stage][loc][name]['data'], ArraySparse) or isinstance(
+                    probes[stage][loc][name]['data'], ArrayDense):
                 raise ProbeError('Attemping to push to finalized `ProbesDict`.')
             # Pytype thinks initialize() returns a ProbesDict with a str for all final
             # values instead of _DataOrType.
@@ -89,8 +89,8 @@ def yzd_finalize(probes: ProbesDict):
     for stage in [_Stage.INPUT, _Stage.OUTPUT, _Stage.HINT]:
         for loc in [_Location.NODE, _Location.EDGE, _Location.GRAPH]:
             for name in probes[stage][loc]:
-                if isinstance(probes[stage][loc][name]['data'], _ArraySparse) or isinstance(
-                        probes[stage][loc][name]['data'], _ArrayDense):
+                if isinstance(probes[stage][loc][name]['data'], ArraySparse) or isinstance(
+                        probes[stage][loc][name]['data'], ArrayDense):
                     raise ProbeError('Attemping to re-finalize a finalized `ProbesDict`.')
                 if stage == _Stage.HINT:
                     # Hints are provided for each timestep. Stack them here.
@@ -99,7 +99,7 @@ def yzd_finalize(probes: ProbesDict):
                         nb_edges_list = []
                         nb_nodes = probes[stage][loc][name]['data'][0].nb_nodes
                         for hint_idx, dp in enumerate(probes[stage][loc][name]['data']):
-                            assert isinstance(dp, _ArraySparse)
+                            assert isinstance(dp, ArraySparse)
                             assert dp.edge_indices_with_optional_content.ndim == 2
                             if name == 'cfg_sparse':
                                 assert dp.edge_indices_with_optional_content.shape[-1] == 2
@@ -109,7 +109,7 @@ def yzd_finalize(probes: ProbesDict):
                             assert isinstance(dp.nb_edges, int)
                             nb_edges_list.append(dp.nb_edges)
                             assert dp.nb_nodes == nb_nodes
-                        probes[stage][loc][name]['data'] = _ArraySparse(
+                        probes[stage][loc][name]['data'] = ArraySparse(
                             edge_indices_with_optional_content=np.concatenate(edge_indices_with_optional_content_list,
                                                                               axis=0),
                             # [nb_edges_total, 2 or 3]
@@ -125,8 +125,8 @@ def yzd_finalize(probes: ProbesDict):
                     # Only one instance of input/output exist. Remove leading axis.
                     assert len(probes[stage][loc][name]['data']) == 1
                     if loc == _Location.EDGE:
-                        assert isinstance(probes[stage][loc][name]['data'][0], _ArraySparse)
-                        probes[stage][loc][name]['data'] = _ArraySparse(
+                        assert isinstance(probes[stage][loc][name]['data'][0], ArraySparse)
+                        probes[stage][loc][name]['data'] = ArraySparse(
                             edge_indices_with_optional_content=probes[stage][loc][name][
                                 'data'][0].edge_indices_with_optional_content,
                             nb_nodes=probes[stage][loc][name][
@@ -136,7 +136,7 @@ def yzd_finalize(probes: ProbesDict):
                             # [1, 1]
                             )
                     else:
-                        assert isinstance(probes[stage][loc][name]['data'][0], _ArrayDense)
+                        assert isinstance(probes[stage][loc][name]['data'][0], ArrayDense)
                         probes[stage][loc][name]['data'] = np.squeeze(
                             np.array(probes[stage][loc][name]['data']))
 
@@ -170,8 +170,8 @@ def yzd_split_stages(probes: ProbesDict,
             raise ProbeError(f'Probe {name} of incorrect type {t}.')
 
         data = probes[stage][loc][name]['data']
-        if not isinstance(probes[stage][loc][name]['data'], _ArraySparse) and not isinstance(
-                probes[stage][loc][name]['data'], _ArrayDense):
+        if not isinstance(probes[stage][loc][name]['data'], ArraySparse) and not isinstance(
+                probes[stage][loc][name]['data'], ArrayDense):
             raise ProbeError((f'Invalid `data` for probe "{name}". ' +
                               'Did you forget to call `probing.finalize`?'))
 
@@ -185,7 +185,7 @@ def yzd_split_stages(probes: ProbesDict,
                 raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
 
         if loc == _Location.EDGE:
-            assert isinstance(probes[stage][loc][name]['data'], _ArraySparse)
+            assert isinstance(probes[stage][loc][name]['data'], ArraySparse)
             data_point = probes[stage][loc][name]['data']
             if stage == _Stage.INPUT:
                 sparse_inputs.append(data_point)
@@ -194,7 +194,7 @@ def yzd_split_stages(probes: ProbesDict,
             else:
                 sparse_hints.append(data_point)
         else:   # 如果是dense才进行扩展
-            isinstance(probes[stage][loc][name]['data'], _ArrayDense)
+            isinstance(probes[stage][loc][name]['data'], ArrayDense)
             dim_to_expand = 1 if stage == _Stage.HINT else 0
             data_point = DataPoint(name=name, location=loc, type_=t,
                                    data=np.expand_dims(data, dim_to_expand))

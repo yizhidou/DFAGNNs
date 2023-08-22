@@ -4,8 +4,11 @@ import numpy as np
 from programl.proto import *
 import programl
 import random
+from clrs._src import yzd_probing
 
-_Array = np.ndarray
+_ArraySparse = yzd_probing.ArraySparse
+_ArrayDense = yzd_probing.ArrayDense
+_Array = yzd_probing.Array
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
 
 
@@ -164,9 +167,9 @@ class SampleLoader:
                 array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                              edges_str=edges_bytes_from_file,
                                                              selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type_sparse(task_name=task_name,
-                                                          selected_ip_indices_base=selected_ip_indices_base,
-                                                          num_pp=num_pp)
+                if_pp, if_ip = self._get_node_type(task_name=task_name,
+                                                   selected_ip_indices_base=selected_ip_indices_base,
+                                                   num_pp=num_pp)
                 return trace_list, array_list, if_pp, if_ip
             else:
                 trace_list = self._load_dense_trace_from_bytes(task_name=task_name,
@@ -201,9 +204,9 @@ class SampleLoader:
                 array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                              edges_str=edge_chunck,
                                                              selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type_sparse(task_name=task_name,
-                                                          selected_ip_indices_base=selected_ip_indices_base,
-                                                          num_pp=num_pp)
+                if_pp, if_ip = self._get_node_type(task_name=task_name,
+                                                   selected_ip_indices_base=selected_ip_indices_base,
+                                                   num_pp=num_pp)
                 return trace_list, array_list, if_pp, if_ip
             else:
                 trace_list = self._load_dense_trace_from_bytes(task_name, trace_chunck)
@@ -339,13 +342,14 @@ class SampleLoader:
                 error_sample_writer.write(sample_id + '\n')
             raise YZDExcpetion(YZDExcpetion.TOO_MANY_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
-        selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
-                                                                 selected_num_ip)))
         if num_ip < selected_num_ip:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
                 error_sample_writer.write(sample_id + '\n')
             raise YZDExcpetion(YZDExcpetion.TOO_FEW_IP_NODES, sample_id)
+
+        selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
+                                                                 selected_num_ip)))
         if not (task_name == 'yzd_liveness' or task_name == b'yzd_liveness'):
             assert num_pp == num_ip
         # if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
@@ -383,17 +387,22 @@ class SampleLoader:
                                                  [num_pp] * selected_num_ip)
             trace_idx_row_sparse = np.tile(np.arange(num_pp), selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            trace_sparse = np.concatenate([np.expand_dims(trace_idx_row_sparse, -1),
-                                           np.expand_dims(trace_idx_col_sparse, -1),
-                                           np.expand_dims(trace_content_sparse, -1)],
-                                          axis=1)
+            trace_sparse_data = np.concatenate([np.expand_dims(trace_idx_row_sparse, -1),
+                                                np.expand_dims(trace_idx_col_sparse, -1),
+                                                np.expand_dims(trace_content_sparse, -1)],
+                                               axis=1)
+            trace_sparse = _ArraySparse(edge_indices_with_optional_content=trace_sparse_data,
+                                        nb_nodes=(num_pp + selected_num_ip) if (
+                                                task_name == 'yzd_liveness' or
+                                                task_name == b'yzd_liveness') else num_pp,
+                                        nb_edges=num_pp * selected_num_ip)
 
             trace_list.append(trace_sparse)
         return trace_list, selected_ip_indices_base, num_pp
 
-    def _get_node_type_sparse(self, task_name: Union[str, bytes],
-                              selected_ip_indices_base,
-                              num_pp):
+    def _get_node_type(self, task_name: Union[str, bytes],
+                       selected_ip_indices_base,
+                       num_pp):
         assert selected_ip_indices_base.ndim == 1 and selected_ip_indices_base.shape[0] == self.selected_num_ip
         if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
             if_pp = np.concatenate([np.ones(shape=(num_pp,), dtype=int),
@@ -452,7 +461,16 @@ class SampleLoader:
                                           np.expand_dims(kill_content_sparse, -1)],
                                          axis=1)
 
-            return [cfg_sparse, gen_sparse, kill_sparse]
+            cfg_sparse_array = _ArraySparse(edge_indices_with_optional_content=cfg_sparse,
+                                            nb_nodes=num_pp + self.selected_num_ip,
+                                            nb_edges=cfg_sparse.shape[0])
+            gen_sparse_array = _ArraySparse(edge_indices_with_optional_content=gen_sparse,
+                                            nb_nodes=num_pp + self.selected_num_ip,
+                                            nb_edges=num_pp * self.selected_num_ip)
+            kill_sparse_array = _ArraySparse(edge_indices_with_optional_content=kill_sparse,
+                                             nb_nodes=num_pp + self.selected_num_ip,
+                                             nb_edges=num_pp * self.selected_num_ip)
+            return [cfg_sparse_array, gen_sparse_array, kill_sparse_array]
         else:
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
             num_pp = edges_saved_matrix[0, 0]
@@ -473,4 +491,10 @@ class SampleLoader:
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
 
-            return [cfg_sparse, gen_sparse]
+            cfg_sparse_array = _ArraySparse(edge_indices_with_optional_content=cfg_sparse,
+                                            nb_nodes=num_pp,
+                                            nb_edges=cfg_sparse.shape[0])
+            gen_sparse_array = _ArraySparse(edge_indices_with_optional_content=gen_sparse,
+                                            nb_nodes=num_pp,
+                                            nb_edges=num_pp * self.selected_num_ip)
+            return [cfg_sparse_array, gen_sparse_array]
