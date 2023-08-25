@@ -9,6 +9,7 @@ def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
                  sample_id: str):
     '''sparse version'''
     assert yzd_sample_loader.if_sparse
+    # max_hint_len = yzd_sample_loader.max_iteration - 1
     trace_list, array_list, if_pp, if_ip = yzd_sample_loader.load_a_sample(task_name='yzd_liveness',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse, kill_sparse = array_list
@@ -28,8 +29,8 @@ def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
                              next_probe={
                                  'trace_h_sparse': trace_list[time_idx],
                                  'time': time_idx
-                             }
-                             )
+                             })
+
     yzd_probing.yzd_push(probes,
                          specs.Stage.OUTPUT,
                          next_probe={'trace_o_sparse': trace_list[-1]})

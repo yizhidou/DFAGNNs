@@ -3,7 +3,7 @@ from clrs._src import samplers
 from clrs._src import probing
 from clrs._src import algorithms
 from clrs._src import yzd_utils
-from clrs._src import yzd_specs
+from clrs._src import specs, yzd_specs
 from clrs._src import yzd_probing
 from typing import Dict, Any, Callable, List, Optional, Tuple
 from programl.proto import *
@@ -27,9 +27,9 @@ Feedback = samplers.Feedback
 #                                       'sparse_features',
 #                                       'sparse_outputs'])
 
-_ArraySparse = yzd_probing._ArraySparse
-_ArrayDense = yzd_probing._ArrayDense
-_Array = yzd_probing._Array
+_ArraySparse = yzd_probing.ArraySparse
+_ArrayDense = yzd_probing.ArrayDense
+_Array = yzd_probing.Array
 _DataPoint = yzd_probing.DataPoint
 Trajectory = List[_DataPoint]
 Trajectories = List[Trajectory]
@@ -49,7 +49,7 @@ class YZDSampler(samplers.Sampler):
         self.sample_id_list = sample_id_list
         self.task_name = task_name
         self.sample_loader = sample_loader
-        self.max_steps = self.sample_loader.max_iteration
+        self.max_steps = self.sample_loader.max_iteration - 1
         self.max_num_pp = self.sample_loader.max_num_pp
 
         samplers.Sampler.__init__(self,
@@ -178,7 +178,7 @@ def _batch_io_sparse(sparse_io_traj_list: Trajectories):
                                   *sparse_io_traj_list)
 
 
-def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
+def _batch_io_sparse_one_probe_deprecated(sparse_io_traj: Trajectory):
     assert sparse_io_traj
     dp_name = sparse_io_traj[0].name
     dp_location = sparse_io_traj[0].location
@@ -211,6 +211,38 @@ def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
                       data=batched_io_sparse_data_this_probe)
 
 
+def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
+    assert sparse_io_traj
+    dp_name = sparse_io_traj[0].name
+    dp_location = sparse_io_traj[0].location
+    dp_type = sparse_io_traj[0].type_
+    batch_size = len(sparse_io_traj)
+    edges_list = []
+    nb_nodes_list_with_0 = [0]
+    nb_edges_list = []
+    for idx, dp in enumerate(sparse_io_traj):
+        assert isinstance(dp, _ArraySparse)
+        assert dp.name == dp_name
+        assert isinstance(dp.data.nb_nodes, int) and isinstance(dp.data.nb_edges, int)
+        nb_nodes_list_with_0.append(dp.data.nb_nodes)
+        nb_edges_list.append(dp.data.nb_edges)
+        edges_list.append(dp.data.edge_indices_with_optional_content)
+    cumsum = np.cumsum(nb_nodes_list_with_0)
+    edges_batched = np.concatenate(edges_list, axis=0)
+    nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
+    nb_edges_batched = np.array(nb_edges_list)
+    indices = np.repeat(np.arange(batch_size), nb_edges_batched)
+    scattered = cumsum[indices]
+    edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
+    batched_io_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                                                     nb_nodes=nb_nodes_batched,
+                                                     nb_edges=nb_edges_batched)
+    return _DataPoint(name=dp_name,
+                      location=dp_location,
+                      type_=dp_type,
+                      data=batched_io_sparse_data_this_probe)
+
+
 def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
     assert sparse_hint_traj_list
     batched_sparse_hint_list = []
@@ -222,8 +254,8 @@ def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
     return batched_sparse_hint_list, np.array(hint_lengths)
 
 
-def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
-                                  min_steps: int):
+def _batch_hints_sparse_one_probe_deprecated(sparse_hint_traj: Trajectory,
+                                             min_steps: int):
     assert sparse_hint_traj
     max_steps = min_steps
     batch_size = len(sparse_hint_traj)
@@ -264,3 +296,37 @@ def _batch_hints_sparse_one_probe(sparse_hint_traj: Trajectory,
                       _type_=dp_type,
                       data=batched_hint_sparse_data_this_probe), \
            hint_len_this_probe
+
+
+def _batch_trace_h(trace_h_traj: Trajectory,
+                   batched_trace_o: _DataPoint,
+                   min_steps: int):
+    # batch trace_h_sparce
+    assert trace_h_traj
+    batch_size = len(trace_h_traj)
+    padded_shape = (min_steps,) + batched_trace_o.data.edge_indices_with_optional_content.shape
+    padded_trace_h_edges = np.broadcast_to(batched_trace_o.data.edge_indices_with_optional_content, padded_shape)
+
+    start_nb_edges = 0
+    hint_len = np.zeros(batch_size, dtype=0)
+    for dp_idx, dp in enumerate(trace_h_traj):
+        if dp is None:
+            continue
+        assert dp.name == 'trace_h_sparse'
+        dp_hint_len, dp_nb_edges, = dp.data.edge_indices_with_optional_content.shape[:2]
+        assert dp_nb_edges == dp.data.nb_edges
+        padded_trace_h_edges[:dp_hint_len, start_nb_edges:start_nb_edges + dp_nb_edges,
+        :] = dp.data.edge_indices_with_optional_content + start_nb_edges
+        start_nb_edges += dp_nb_edges
+        assert batched_trace_o.data.nb_nodes[dp_idx] == dp.data.nb_nodes
+        assert batched_trace_o.data.nb_edges[dp_idx] == dp_nb_edges
+        hint_len[dp_idx] = dp_hint_len
+
+    padded_trace_h = _ArraySparse(edge_indices_with_optional_content=padded_trace_h_edges,
+                                  nb_nodes=batched_trace_o.data.nb_nodes,
+                                  nb_edges=batched_trace_o.data.nb_edges)
+    return _DataPoint(_name='trace_h_sparse',
+                      _location=specs.Location.EDGE,
+                      _type_=specs.Type.MASK,
+                      data=padded_trace_h), \
+           hint_len
