@@ -23,6 +23,7 @@ def yzd_liveness(yzd_sample_loader: yzd_utils.SampleLoader,
                              'gen_sparse': gen_sparse,
                              'kill_sparse': kill_sparse,
                              'trace_i_sparse': trace_list[0]})
+
     for time_idx in range(1, len(trace_list) - 1):
         yzd_probing.yzd_push(probes,
                              specs.Stage.HINT,

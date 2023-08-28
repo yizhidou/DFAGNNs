@@ -13,7 +13,7 @@ YZDSPECS = types.MappingProxyType({
         'if_ip': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.MASK),
         'trace_i_sparse': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
         'trace_h_sparse': (specs.Stage.HINT, specs.Location.EDGE, specs.Type.MASK),
-        'time': (specs.Stage.HINT, specs.Location.GRAPH, specs.Type.SCALAR),
+        # 'time': (specs.Stage.HINT, specs.Location.GRAPH, specs.Type.SCALAR),
         'trace_o_sparse': (specs.Stage.OUTPUT, specs.Location.EDGE, specs.Type.MASK)
     },
     'yzd_liveness_dense': {

@@ -5,14 +5,24 @@ import numpy as np
 from typing import Dict, List, Tuple, Union
 import jax
 import attr
+from dataclasses import dataclass
 
 _Location = specs.Location
 _Stage = specs.Stage
 _Type = specs.Type
-ArraySparse = collections.namedtuple('ArraySparse', ['edge_indices_with_optional_content',
-                                                     'nb_nodes',
-                                                     'nb_edges'])
+# ArraySparse = collections.namedtuple('ArraySparse', ['edge_indices_with_optional_content',
+#                                                      'nb_nodes',
+#                                                      'nb_edges'])
 ArrayDense = np.ndarray
+
+
+@dataclass
+class ArraySparse:
+    edge_indices_with_optional_content: ArrayDense
+    nb_nodes: ArrayDense
+    nb_edges: ArrayDense
+
+
 Array = Union[ArrayDense, ArraySparse]
 _Data = Union[Array, List[Array]]
 _DataOrType = Union[_Data, str]
@@ -37,44 +47,34 @@ class DataPoint:
 
     @property
     def name(self):
-        return probing._convert_to_str(self._name)
+        return self._name
 
     @property
     def location(self):
-        return probing._convert_to_str(self._location)
+        return self._location
 
     @property
     def type_(self):
-        return probing._convert_to_str(self._type_)
+        return self._type_
 
     def __repr__(self):
-        s = f'DataPoint(name="{self.name}",\tlocation={self.location},\t'
+        s = f'DataPoint(name={self.name}, location={self.location}, type={self.type_}\n'
         if isinstance(self.data, ArraySparse):
-            s += f'data=ArrarySparse(nb_nodes={sum(self.data.nb_nodes)}))\t'
+            s += f'\tdata=ArrarySparse(nb_nodes={self.data.nb_nodes}, nb_edges={self.data.nb_edges},\n\tedge_indices_with_optional_content=\n{self.data.edge_indices_with_optional_content}))\n'
         else:
             assert isinstance(self.data, ArrayDense)
-            s += f'data=ArrayDense({self.data.shape}))'
+            s += f'\tdata=ArrayDense(shape={self.data.shape}))'
         return s
 
     def tree_flatten(self):
-        if isinstance(self.data, ArrayDense):
-            data = (self.data,)
-            meta = (self.name, self.location, self.type_)
-        else:
-            data = (self.data.edge_indices_with_optional_content,)
-            meta = (self.data.nb_nodes, self.data.nb_edges, self.name, self.location, self.type_)
+        data = (self.data,)
+        meta = (self.name, self.location, self.type_)
         return data, meta
 
     @classmethod
     def tree_unflatten(cls, meta, data):
-        if isinstance(data, ArrayDense):
-            name, location, type_ = meta
-            subdata, = data
-        else:
-            nb_nodes, nb_edges, name, location, type_ = meta
-            subdata = ArraySparse(edge_indices_with_optional_content=data,
-                                  nb_nodes=nb_nodes,
-                                  nb_edges=nb_edges)
+        name, location, type_ = meta
+        subdata, = data
         return DataPoint(name, location, type_, subdata)
 
 
@@ -210,13 +210,15 @@ def yzd_split_stages(probes: ProbesDict,
                      spec: specs.Spec):
     """Splits contents of `ProbesDict` into `DataPoint`s by stage."""
 
-    inputs = []
+    input_NODE_dp_list = []
     # outputs = []
-    hints = []
+    # dense_hints_list = []
 
-    sparse_inputs = []
-    sparse_outputs = []
-    sparse_hints = []
+    input_EDGE_dp_list = []
+    # sparse_outputs = []
+    # sparse_hints = []
+    trace_o = None
+    trace_h = None
 
     for name in spec:
         stage, loc, t = spec[name]
@@ -235,41 +237,46 @@ def yzd_split_stages(probes: ProbesDict,
             raise ProbeError(f'Probe {name} of incorrect type {t}.')
 
         data = probes[stage][loc][name]['data']
-        if not isinstance(probes[stage][loc][name]['data'], ArraySparse) and not isinstance(
+        if not isinstance(data, ArraySparse) and not isinstance(
                 probes[stage][loc][name]['data'], ArrayDense):
             raise ProbeError((f'Invalid `data` for probe "{name}". ' +
                               'Did you forget to call `probing.finalize`?'))
 
-        if t in [_Type.MASK, _Type.MASK_ONE, _Type.CATEGORICAL]:
-            # pytype: disable=attribute-error
-            if not ((data == 0) | (data == 1) | (data == -1)).all():
-                raise ProbeError(f'0|1|-1 `data` for probe "{name}"')
-            # pytype: enable=attribute-error
-            if t in [_Type.MASK_ONE, _Type.CATEGORICAL
-                     ] and not np.all(np.sum(np.abs(data), -1) == 1):
-                raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
+        # if t in [_Type.MASK, _Type.MASK_ONE, _Type.CATEGORICAL]:
+        #     # pytype: disable=attribute-error
+        #     if not ((data == 0) | (data == 1) | (data == -1)).all():
+        #         raise ProbeError(f'0|1|-1 `data` for probe "{name}"')
+        #     # pytype: enable=attribute-error
+        #     if t in [_Type.MASK_ONE, _Type.CATEGORICAL
+        #              ] and not np.all(np.sum(np.abs(data), -1) == 1):
+        #         raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
 
+        data_point = DataPoint(name=name, location=loc, type_=t,
+                               data=data)
         if loc == _Location.EDGE:
-            assert isinstance(probes[stage][loc][name]['data'], ArraySparse)
-            data_point = probes[stage][loc][name]['data']
+            assert isinstance(data, ArraySparse)
+
             if stage == _Stage.INPUT:
-                sparse_inputs.append(data_point)
+                input_EDGE_dp_list.append(data_point)
             elif stage == _Stage.OUTPUT:
-                sparse_outputs.append(data_point)
+                # sparse_outputs.append(data_point)
+                assert name == 'trace_o_sparse'
+                trace_o = data_point
             else:
-                sparse_hints.append(data_point)
+                # sparse_hints.append(data_point)
+                assert name == 'trace_h_sparse'
+                trace_h = data_point
         else:  # 如果是dense才进行扩展
             isinstance(probes[stage][loc][name]['data'], ArrayDense)
-            dim_to_expand = 1 if stage == _Stage.HINT else 0
-            data_point = DataPoint(name=name, location=loc, type_=t,
-                                   data=np.expand_dims(data, dim_to_expand))
             if stage == _Stage.INPUT:
-                inputs.append(data_point)
+                assert loc == _Location.NODE
+                input_NODE_dp_list.append(data_point)
             elif stage == _Stage.OUTPUT:
                 # outputs.append(data_point)
                 raise ProbeError('In YZDDFATasks, there is not any dense output probe.')
             else:
-                hints.append(data_point)
+                raise ProbeError('In YZDDFATasks, there is not any dense output probe.')
+                # dense_hints.append(data_point)
 
-    return inputs, hints, sparse_inputs, sparse_outputs, sparse_hints
+    return input_NODE_dp_list, input_EDGE_dp_list, trace_o, trace_h
 # pylint: disable=invalid-name

@@ -5,7 +5,7 @@ from clrs._src import algorithms
 from clrs._src import yzd_utils
 from clrs._src import specs, yzd_specs
 from clrs._src import yzd_probing
-from typing import Dict, Any, Callable, List, Optional, Tuple
+from typing import Dict, Any, Callable, List, Optional, Tuple, Iterable
 from programl.proto import *
 import random
 import numpy as np
@@ -69,12 +69,10 @@ class YZDSampler(samplers.Sampler):
                     spec: Spec, min_length: int,
                     algorithm: samplers.Algorithm, *args, **kwargs):
         """Generate a batch of data."""
-        inputs = []
-        # outputs = []
-        hints = []
-        sparse_inputs = []
-        sparse_outputs = []
-        sparse_hints = []
+        input_NODE_dp_list_list = []
+        input_EDGE_dp_list_list = []
+        trace_o_list = []
+        trace_h_list = []
 
         num_created_samples = 0
         while num_created_samples < num_samples:
@@ -84,25 +82,28 @@ class YZDSampler(samplers.Sampler):
             except yzd_utils.YZDExcpetion:
                 continue
             num_created_samples += 1
-            inp, hint, s_inp, s_outp, s_hint = yzd_probing.yzd_split_stages(probes, spec)
-            inputs.append(inp)
+            inp_NODE_dp_list, inp_EDGE_dp_list, trace_o, trace_h = yzd_probing.yzd_split_stages(probes, spec)
+            input_NODE_dp_list_list.append(inp_NODE_dp_list)
             # outputs.append(outp)  # this should be empty
-            hints.append(hint)
-            sparse_inputs.append(s_inp)
-            sparse_outputs.append(s_outp)
-            sparse_hints.append(s_hint)
-            if len(hints) % 1000 == 0:
-                logging.info('%i samples created', len(hints))
+            # hints.append(hint)
+            input_EDGE_dp_list_list.append(inp_EDGE_dp_list)
+            trace_o_list.append(trace_o)
+            trace_h_list.append(trace_h)
 
         # Batch and pad trajectories to max(T).
-        inputs = samplers._batch_io(inputs)
+        batched_input_NODE_dp_list = _batch_NODE_input(input_NODE_dp_list_list)
+        batched_input_EDGE_dp_list = _batch_EDGE_input(input_EDGE_dp_list_list)
+        batched_trace_o = _batch_EDGE_one_probe(EDGE_data_list=trace_o_list)
+        batched_trace_h, hint_len = _batch_trace_h(trace_h_traj=trace_h_list,
+                                                   batched_trace_o=batched_trace_o,
+                                                   min_steps=min_length)
         # outputs = samplers._batch_io(outputs)
-        hints, lengths = samplers._batch_hints(hints, min_length)
+        # hints, lengths = samplers._batch_hints(hints, min_length)
 
         sparse_inputs = _batch_io_sparse(sparse_inputs)
         sparse_outputs = _batch_io_sparse(sparse_outputs)
         sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
-        return inputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
+        return batched_input_NODE_dp_list, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
 
     def next(self, batch_size: Optional[int] = None) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
@@ -168,134 +169,47 @@ def build_yzd_sampler(task_name: str,
     return sampler, spec
 
 
-def _batch_io_sparse(sparse_io_traj_list: Trajectories):
-    assert sparse_io_traj_list
-    # batched_sparse_io_list = []
-    # for sparse_io_traj in sparse_io_traj_list:
-    #     batched_sparse_io_list.append(_batch_io_sparse_one_probe(sparse_io_traj))
-    # return batched_sparse_io_list
-    return jax.tree_util.tree_map(lambda *x: _batch_io_sparse_one_probe(x),
-                                  *sparse_io_traj_list)
+def _batch_NODE_input(input_NODE_dp_list_list: Trajectories):
+    assert input_NODE_dp_list_list
+    for input_NODE_dp_list in input_NODE_dp_list_list:
+        for i, input_NODE_dp in enumerate(input_NODE_dp_list):
+            assert input_NODE_dp.name == input_NODE_dp_list_list[0][i].name
+    return jax.tree_util.tree_map(lambda *x: np.concatenate(x), *input_NODE_dp_list_list)
 
 
-def _batch_io_sparse_one_probe_deprecated(sparse_io_traj: Trajectory):
-    assert sparse_io_traj
-    dp_name = sparse_io_traj[0].name
-    dp_location = sparse_io_traj[0].location
-    dp_type = sparse_io_traj[0].type_
-    batch_size = len(sparse_io_traj)
+def _batch_EDGE_input(input_EDGE_dp_list_list: Trajectories):
+    assert input_EDGE_dp_list_list
+    for input_EDGE_dp_list in input_EDGE_dp_list_list:
+        for i, input_EDGE_dp in enumerate(input_EDGE_dp_list):
+            # assert isinstance(dp.data, _ArraySparse)
+            assert input_EDGE_dp_list_list[0][i].name == input_EDGE_dp.name
+    return jax.tree_util.tree_map(lambda *x: _batch_EDGE_one_probe(x),
+                                  *input_EDGE_dp_list_list)
+
+
+def _batch_EDGE_one_probe(EDGE_data_list):
+    '''
+    EDGE_dp_list: Iterable[_ArraySparse]
+    '''
+    assert EDGE_data_list
+    batch_size = len(EDGE_data_list)
     edges_list = []
     nb_nodes_list_with_0 = [0]
     nb_edges_list = []
-    for idx, dp in enumerate(sparse_io_traj):
-        assert isinstance(dp, _ArraySparse)
-        assert dp.name == dp_name
-        assert isinstance(dp.data.nb_nodes, int)
-        nb_nodes_list_with_0.append(dp.data.nb_nodes)
-        assert dp.data.nb_edges.shape[0] == 1 and dp.data.nb_edges.shape[1] == 1
-        nb_edges_list.append(dp.data.nb_edges)
-        edges_list.append(dp.data.edge_indices_with_optional_content)
-    cumsum = np.cumsum(nb_nodes_list_with_0)
-    edges_batched = np.concatenate(edges_list, axis=0)
-    nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
-    nb_edges_batched = np.concatenate(nb_edges_list)
-    indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
-    scattered = cumsum[indices]
-    edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    batched_io_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
-                                                     nb_nodes=nb_nodes_batched,
-                                                     nb_edges=nb_edges_batched)
-    return _DataPoint(_name=dp_name,
-                      _location=dp_location,
-                      _type_=dp_type,
-                      data=batched_io_sparse_data_this_probe)
-
-
-def _batch_io_sparse_one_probe(sparse_io_traj: Trajectory):
-    assert sparse_io_traj
-    dp_name = sparse_io_traj[0].name
-    dp_location = sparse_io_traj[0].location
-    dp_type = sparse_io_traj[0].type_
-    batch_size = len(sparse_io_traj)
-    edges_list = []
-    nb_nodes_list_with_0 = [0]
-    nb_edges_list = []
-    for idx, dp in enumerate(sparse_io_traj):
-        assert isinstance(dp, _ArraySparse)
-        assert dp.name == dp_name
-        assert isinstance(dp.data.nb_nodes, int) and isinstance(dp.data.nb_edges, int)
-        nb_nodes_list_with_0.append(dp.data.nb_nodes)
-        nb_edges_list.append(dp.data.nb_edges)
-        edges_list.append(dp.data.edge_indices_with_optional_content)
+    for idx, dp_data in enumerate(EDGE_data_list):
+        nb_nodes_list_with_0.append(dp_data.nb_nodes)
+        nb_edges_list.append(dp_data.nb_edges)
+        edges_list.append(dp_data.edge_indices_with_optional_content)
     cumsum = np.cumsum(nb_nodes_list_with_0)
     edges_batched = np.concatenate(edges_list, axis=0)
     nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
     nb_edges_batched = np.array(nb_edges_list)
     indices = np.repeat(np.arange(batch_size), nb_edges_batched)
     scattered = cumsum[indices]
-    edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    batched_io_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
-                                                     nb_nodes=nb_nodes_batched,
-                                                     nb_edges=nb_edges_batched)
-    return _DataPoint(name=dp_name,
-                      location=dp_location,
-                      type_=dp_type,
-                      data=batched_io_sparse_data_this_probe)
-
-
-def _batch_hints_sparse(sparse_hint_traj_list: Trajectories, min_steps: int):
-    assert sparse_hint_traj_list
-    batched_sparse_hint_list = []
-    hint_lengths = []
-    for sparse_hints_traj in sparse_hint_traj_list:
-        batched_sparse_hint_one_probe, hint_len = _batch_hints_sparse_one_probe(sparse_hint_traj=sparse_hints_traj,
-                                                                                min_steps=min_steps)
-        hint_lengths.append(hint_len)
-    return batched_sparse_hint_list, np.array(hint_lengths)
-
-
-def _batch_hints_sparse_one_probe_deprecated(sparse_hint_traj: Trajectory,
-                                             min_steps: int):
-    assert sparse_hint_traj
-    max_steps = min_steps
-    batch_size = len(sparse_hint_traj)
-    dp_name = sparse_hint_traj[0].name
-    dp_location = sparse_hint_traj[0].location
-    dp_type = sparse_hint_traj[0].type_
-    hint_len_this_probe = sparse_hint_traj[0].data.nb_edges.shape[1]
-    edges_list = []
-    nb_nodes_list_with_0 = [0]
-    for dp in sparse_hint_traj:
-        assert dp.name == dp_name
-        assert isinstance(dp.data, _ArraySparse)
-        assert isinstance(dp.data.nb_nodes, int)
-        nb_nodes_list_with_0.append(dp.data.nb_nodes)
-        assert dp.data.nb_edges.shape[0] == 1 and dp.data.nb_edges.shape[1] == hint_len_this_probe
-        # hint_len = dp.data.nb_edges.shape[1]
-        # if hint_len > max_steps:
-        #     max_steps = hint_len
-        # hint_lengths_list.append(hint_len)
-        edges_list.append(dp.data.edge_indices_with_optional_content)
-    cumsum = np.cumsum(nb_nodes_list_with_0)
-    edges_batched = np.concatenate(edges_list, axis=0)
-    nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
-
-    nb_edges_batched = np.zeros((batch_size, max_steps))
-    for idx, dp in enumerate(sparse_hint_traj):
-        nb_edges_batched[idx][:dp.data.nb_edges.shape[1]] = dp.data.nb_edges[0]
-
-    indices = np.repeat(np.arange(batch_size), np.sum(nb_edges_batched, axis=1))
-    scattered = cumsum[indices]
-    edges_batched = edges_batched + np.expand_dims(scattered, axis=1)
-    batched_hint_sparse_data_this_probe = _ArraySparse(edge_indices_with_optional_content=edges_batched,
-                                                       nb_nodes=nb_nodes_batched,
-                                                       nb_edges=nb_edges_batched)
-
-    return _DataPoint(_name=dp_name,
-                      _location=dp_location,
-                      _type_=dp_type,
-                      data=batched_hint_sparse_data_this_probe), \
-           hint_len_this_probe
+    edges_batched[:, :2] += np.expand_dims(scattered, axis=1)
+    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
+                        nb_nodes=nb_nodes_batched,
+                        nb_edges=nb_edges_batched)
 
 
 def _batch_trace_h(trace_h_traj: Trajectory,
@@ -304,29 +218,33 @@ def _batch_trace_h(trace_h_traj: Trajectory,
     # batch trace_h_sparce
     assert trace_h_traj
     batch_size = len(trace_h_traj)
-    padded_shape = (min_steps,) + batched_trace_o.data.edge_indices_with_optional_content.shape
-    padded_trace_h_edges = np.broadcast_to(batched_trace_o.data.edge_indices_with_optional_content, padded_shape)
+    padded_trace_h_edges = np.repeat(a=np.expand_dims(batched_trace_o.data.edge_indices_with_optional_content,
+                                                      axis=0),
+                                     repeats=min_steps,
+                                     axis=0)  # [min_steps, nb_edges_entire_batch, 3]
 
     start_nb_edges = 0
-    hint_len = np.zeros(batch_size, dtype=0)
+    accum_nb_nodes = 0
+    hint_len = np.zeros(batch_size, dtype=int)
     for dp_idx, dp in enumerate(trace_h_traj):
-        if dp is None:
-            continue
         assert dp.name == 'trace_h_sparse'
         dp_hint_len, dp_nb_edges, = dp.data.edge_indices_with_optional_content.shape[:2]
         assert dp_nb_edges == dp.data.nb_edges
+        tmp = accum_nb_nodes * np.ones_like(dp.data.edge_indices_with_optional_content)
+        tmp[..., -1] = 0
         padded_trace_h_edges[:dp_hint_len, start_nb_edges:start_nb_edges + dp_nb_edges,
-        :] = dp.data.edge_indices_with_optional_content + start_nb_edges
+        :] = dp.data.edge_indices_with_optional_content + tmp
         start_nb_edges += dp_nb_edges
         assert batched_trace_o.data.nb_nodes[dp_idx] == dp.data.nb_nodes
         assert batched_trace_o.data.nb_edges[dp_idx] == dp_nb_edges
+        accum_nb_nodes += dp.data.nb_nodes
         hint_len[dp_idx] = dp_hint_len
 
     padded_trace_h = _ArraySparse(edge_indices_with_optional_content=padded_trace_h_edges,
                                   nb_nodes=batched_trace_o.data.nb_nodes,
                                   nb_edges=batched_trace_o.data.nb_edges)
-    return _DataPoint(_name='trace_h_sparse',
-                      _location=specs.Location.EDGE,
-                      _type_=specs.Type.MASK,
+    return _DataPoint(name='trace_h_sparse',
+                      location=specs.Location.EDGE,
+                      type_=specs.Type.MASK,
                       data=padded_trace_h), \
            hint_len
