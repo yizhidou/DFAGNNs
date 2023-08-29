@@ -83,22 +83,22 @@ class YZDNet(nets.Net):
             lstm_init = lambda x: 0
 
         for algorithm_index, features in zip(algorithm_indices, features_list):
-            dense_inputs = features.dense_inputs
-            sparse_inputs = features.sparse_inputs
-            dense_hints = features.dense_hints
-            sparse_hints = features.sparse_hints
-            lengths = features.lengths
+            input_NODE_dp_list = features.input_NODE_dp_list
+            input_EDGE_dp_list = features.input_EDGE_dp_list
+            trace_h = features.trace_h
+            hint_len = features.hint_len
 
             batch_size, nb_nodes_entire_batch = _data_dimensions(features)
 
-            nb_mp_steps = max(1, sparse_hints[0].data.nb_nodes.shape[0] - 1)
-            hiddens = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
+            # YZDTODO 不知道为什么要减一 但是先不管了
+            nb_mp_steps = max(1, trace_h.data.edge_indices_with_optional_content.shape[0] - 1)
+            hiddens = jnp.zeros((batch_size, nb_nodes_entire_batch, self.hidden_dim))
 
             if self.use_lstm:
-                lstm_state = lstm_init(nb_nodes_entire_batch)
-                # lstm_state = jax.tree_util.tree_map(
-                #     lambda x, b=batch_size, n=nb_nodes: jnp.reshape(x, [b, n, -1]),
-                #     lstm_state)
+                lstm_state = lstm_init(batch_size * nb_nodes_entire_batch)
+                lstm_state = jax.tree_util.tree_map(
+                    lambda x, b=batch_size, n=nb_nodes_entire_batch: jnp.reshape(x, [b, n, -1]),
+                    lstm_state)
             else:
                 lstm_state = None
 
@@ -166,14 +166,14 @@ class YZDNet(nets.Net):
     def _msg_passing_step(self,
                           mp_state: _MessagePassingScanState,
                           i: int,
-                          dense_hints: List[_DataPoint],
-                          sparse_hints: _Trajectory,
+                          # dense_hints: List[_DataPoint],
+                          trace_h: _DataPoint,
                           repred: bool,
                           lengths: chex.Array,
                           batch_size: int,
                           nb_nodes: int,
-                          dense_inputs: _Trajectory,
-                          sparse_inputs: _Trajectory,
+                          input_NODE_dp_list: _Trajectory,
+                          input_EDGE_dp_list: _Trajectory,
                           first_step: bool,
                           spec: _Spec,
                           encs: Dict[str, List[hk.Module]],
@@ -299,7 +299,6 @@ class YZDNet(nets.Net):
                 except Exception as e:
                     raise Exception(f'Failed to process {dp}') from e
 
-
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
@@ -348,11 +347,18 @@ class YZDNet(nets.Net):
 
 def _data_dimensions(features: _Features):
     """Returns (batch_size, nb_nodes)."""
-    for inp in features.sparse_inputs:
-        if inp.location == _Location.EDGE:
-            batch_size = inp.data.nb_nodes.shape[0]
-            nb_nodes_entire_batch = jnp.sum(inp.data.nb_nodes)
-            # nb_edges_each_graph = jnp.sum(inp.data.nb_edges, axis=-1)
-            # assert nb_edges_each_graph.shape[0] == batch_size
-            return (batch_size, nb_nodes_entire_batch)
-    assert False
+    nb_nodes_entire_batch = None
+    batch_size = None
+    for input_NODE_dp in features.input_NODE_dp_list:
+        if nb_nodes_entire_batch is None:
+            nb_nodes_entire_batch = input_NODE_dp.shape[0]
+        else:
+            assert nb_nodes_entire_batch == input_NODE_dp.shape[0]
+    for input_EDGE_dp in features.input_EDGE_dp_list:
+        nb_nodes = input_EDGE_dp.data.nb_nodes
+        assert jnp.sum(nb_nodes).item() == nb_nodes_entire_batch
+        if batch_size is None:
+            batch_size = nb_nodes.shape[0]
+        else:
+            assert batch_size == nb_nodes.shape[0]
+    return batch_size, nb_nodes_entire_batch

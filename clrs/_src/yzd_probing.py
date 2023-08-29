@@ -217,7 +217,7 @@ def yzd_split_stages(probes: ProbesDict,
     input_EDGE_dp_list = []
     # sparse_outputs = []
     # sparse_hints = []
-    trace_o = None
+    trace_o_list = []
     trace_h = None
 
     for name in spec:
@@ -261,7 +261,7 @@ def yzd_split_stages(probes: ProbesDict,
             elif stage == _Stage.OUTPUT:
                 # sparse_outputs.append(data_point)
                 assert name == 'trace_o_sparse'
-                trace_o = data_point
+                trace_o_list.append(data_point)
             else:
                 # sparse_hints.append(data_point)
                 assert name == 'trace_h_sparse'
@@ -278,5 +278,5 @@ def yzd_split_stages(probes: ProbesDict,
                 raise ProbeError('In YZDDFATasks, there is not any dense output probe.')
                 # dense_hints.append(data_point)
 
-    return input_NODE_dp_list, input_EDGE_dp_list, trace_o, trace_h
+    return input_NODE_dp_list, input_EDGE_dp_list, trace_o_list, trace_h
 # pylint: disable=invalid-name

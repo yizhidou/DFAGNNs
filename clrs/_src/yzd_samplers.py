@@ -13,12 +13,17 @@ import jax
 import collections
 
 Spec = yzd_specs.Spec
-Features = collections.namedtuple('Features', ['dense_inputs',
-                                               'sparse_inputs',
-                                               'dense_hints',
-                                               'sparse_hints',
-                                               'lengths'])
-Feedback = samplers.Feedback
+# Features = collections.namedtuple('Features', ['dense_inputs',
+#                                                'sparse_inputs',
+#                                                'dense_hints',
+#                                                'sparse_hints',
+#                                                'lengths'])
+Features = collections.namedtuple('Features', ['input_NODE_dp_list',
+                                               'input_EDGE_dp_list',
+                                               'trace_h',
+                                               'hint_len'])
+
+Feedback = collections.namedtuple('Feedback', ['features', 'trace_o'])
 # DenseFeatures = samplers.Features
 # SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
 # YZDFeedback = collections.namedtuple('YZDFeedback',
@@ -71,7 +76,7 @@ class YZDSampler(samplers.Sampler):
         """Generate a batch of data."""
         input_NODE_dp_list_list = []
         input_EDGE_dp_list_list = []
-        trace_o_list = []
+        trace_o_list_list = []
         trace_h_list = []
 
         num_created_samples = 0
@@ -82,28 +87,27 @@ class YZDSampler(samplers.Sampler):
             except yzd_utils.YZDExcpetion:
                 continue
             num_created_samples += 1
-            inp_NODE_dp_list, inp_EDGE_dp_list, trace_o, trace_h = yzd_probing.yzd_split_stages(probes, spec)
+            inp_NODE_dp_list, inp_EDGE_dp_list, trace_o_list, trace_h = yzd_probing.yzd_split_stages(probes, spec)
             input_NODE_dp_list_list.append(inp_NODE_dp_list)
             # outputs.append(outp)  # this should be empty
             # hints.append(hint)
             input_EDGE_dp_list_list.append(inp_EDGE_dp_list)
-            trace_o_list.append(trace_o)
+            trace_o_list_list.append(trace_o_list)
             trace_h_list.append(trace_h)
 
         # Batch and pad trajectories to max(T).
         batched_input_NODE_dp_list = _batch_NODE_input(input_NODE_dp_list_list)
-        batched_input_EDGE_dp_list = _batch_EDGE_input(input_EDGE_dp_list_list)
-        batched_trace_o = _batch_EDGE_one_probe(EDGE_data_list=trace_o_list)
+        batched_input_EDGE_dp_list = _batch_EDGE_io(input_EDGE_dp_list_list)
+        batched_trace_o = _batch_EDGE_io(trace_o_list_list)[0]
         batched_trace_h, hint_len = _batch_trace_h(trace_h_traj=trace_h_list,
                                                    batched_trace_o=batched_trace_o,
                                                    min_steps=min_length)
         # outputs = samplers._batch_io(outputs)
         # hints, lengths = samplers._batch_hints(hints, min_length)
-
-        sparse_inputs = _batch_io_sparse(sparse_inputs)
-        sparse_outputs = _batch_io_sparse(sparse_outputs)
-        sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
-        return batched_input_NODE_dp_list, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths
+        # sparse_inputs = _batch_io_sparse(sparse_inputs)
+        # sparse_outputs = _batch_io_sparse(sparse_outputs)
+        # sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
+        return batched_input_NODE_dp_list, batched_input_EDGE_dp_list, batched_trace_o, batched_trace_h, hint_len
 
     def next(self, batch_size: Optional[int] = None) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
@@ -117,37 +121,26 @@ class YZDSampler(samplers.Sampler):
         if not batch_size:
             # YZDTODO should raise an error
             batch_size = 1
-        inputs, hints, lengths, sparse_inputs, sparse_outputs, sparse_hints, sparse_lengths = self._make_batch(
+        batched_input_NODE_dp_list, batched_input_EDGE_dp_list, batched_trace_o, batched_trace_h, hint_len = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,
             min_length=self.max_steps,
             algorithm=self._algorithm)
-        assert np.array_equal(lengths, sparse_lengths)
-        if self.task_name == 'yzd_liveness':
-            assert len(inputs) == 3 and len(hints) == 1 and len(sparse_inputs) == 3 and len(sparse_hints) == 1
-        else:
-            assert len(inputs) == 3 and len(hints) == 1 and len(sparse_inputs) == 2 and len(sparse_hints) == 1
+        # assert np.array_equal(lengths, sparse_lengths)
+        assert len(batched_input_NODE_dp_list) == 3 and len(
+            batched_input_EDGE_dp_list) == 3 if self.task_name == 'yzd_liveness' else 2
 
         # 讲道理在我的情形下这条warning是不应该出现的
-        if hints[0].data.shape[0] > self.max_steps:
-            logging.warning('Increasing hint lengh from %i to %i',
-                            self.max_steps, hints[0].data.shape[0])
-            self.max_steps = hints[0].data.shape[0]
+        # if hints[0].data.shape[0] > self.max_steps:
+        #     logging.warning('Increasing hint lengh from %i to %i',
+        #                     self.max_steps, hints[0].data.shape[0])
+        #     self.max_steps = hints[0].data.shape[0]
 
-        # dense_features = DenseFeatures(inputs=inputs, hints=hints, lengths=lengths)
-        # sparse_featrures = SparseFeatures(sparse_inputs=sparse_inputs, sparse_hints=sparse_hints,
-        #                                   sparse_lengths=sparse_lengths)
-        # return YZDFeedback(dense_features=dense_features,
-        #                    # dense_outputs=outputs,
-        #                    sparse_features=sparse_featrures, sparse_outputs=sparse_outputs)
-        # feedback_inputs = dict(dense_inputs=inputs, sparse_inputs=sparse_inputs)
-        # feedback_hints = dict(dense_hints=hints, sparse_hints=sparse_hints)
-        return Feedback(features=Features(dense_inputs=inputs,
-                                          sparse_inputs=sparse_inputs,
-                                          dense_hints=hints,
-                                          sparse_hints=sparse_hints,
-                                          lengths=lengths),
-                        outputs=sparse_outputs)
+        return Feedback(features=Features(input_NODE_dp_list=batched_input_NODE_dp_list,
+                                          input_EDGE_dp_list=batched_input_EDGE_dp_list,
+                                          trace_h=batched_trace_h,
+                                          hint_len=hint_len),
+                        trace_o=batched_trace_o)
 
 
 def build_yzd_sampler(task_name: str,
@@ -177,14 +170,14 @@ def _batch_NODE_input(input_NODE_dp_list_list: Trajectories):
     return jax.tree_util.tree_map(lambda *x: np.concatenate(x), *input_NODE_dp_list_list)
 
 
-def _batch_EDGE_input(input_EDGE_dp_list_list: Trajectories):
-    assert input_EDGE_dp_list_list
-    for input_EDGE_dp_list in input_EDGE_dp_list_list:
+def _batch_EDGE_io(io_EDGE_dp_list_list: Trajectories):
+    assert io_EDGE_dp_list_list
+    for input_EDGE_dp_list in io_EDGE_dp_list_list:
         for i, input_EDGE_dp in enumerate(input_EDGE_dp_list):
             # assert isinstance(dp.data, _ArraySparse)
-            assert input_EDGE_dp_list_list[0][i].name == input_EDGE_dp.name
+            assert io_EDGE_dp_list_list[0][i].name == input_EDGE_dp.name
     return jax.tree_util.tree_map(lambda *x: _batch_EDGE_one_probe(x),
-                                  *input_EDGE_dp_list_list)
+                                  *io_EDGE_dp_list_list)
 
 
 def _batch_EDGE_one_probe(EDGE_data_list):
