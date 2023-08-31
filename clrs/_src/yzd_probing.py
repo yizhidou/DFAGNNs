@@ -18,9 +18,9 @@ ArrayDense = np.ndarray
 
 @dataclass
 class ArraySparse:
-    edge_indices_with_optional_content: ArrayDense
-    nb_nodes: ArrayDense
-    nb_edges: ArrayDense
+    edges_with_optional_content: ArrayDense
+    nb_nodes: Union[int, ArrayDense]
+    nb_edges: Union[int, ArrayDense]
 
 
 Array = Union[ArrayDense, ArraySparse]

@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import chex
 
 from clrs._src import decoders
-from clrs._src import encoders
+from clrs._src import encoders, yzd_encoders
 from clrs._src import probing, yzd_probing
 from clrs._src import processors
 from clrs._src import samplers, yzd_samplers
@@ -16,7 +16,8 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 
-_Array = chex.Array
+_chex_Array = chex.Array
+_ArraySparse = yzd_probing.ArraySparse
 _DataPoint = yzd_probing.DataPoint
 _Features = yzd_samplers.Features
 _Location = specs.Location
@@ -195,8 +196,7 @@ class YZDNet(nets.Net):
             for hint_name in decoded_hint:
                 cur_hint.append(decoded_hint[hint_name])
         else:
-            cur_dense_hint = []
-            cur_sparse_hint = []
+            # cur_trace_h = []
             needs_noise = (self.decode_hints and not first_step and
                            self._hint_teacher_forcing < 1.0)
 
@@ -207,28 +207,20 @@ class YZDNet(nets.Net):
                     (batch_size,))
             else:
                 force_mask = None
-            for hint in dense_hints:
-                hint_data = jnp.asarray(hint.data)[i]  # YZDTODO: 其实我真的不知道这个i是干嘛的
-                _, loc, typ = spec[hint.name]
-                assert loc == _Location.GRAPH and hint.name == 'time'
-                if needs_noise:
-                    hint_data = jnp.where(nets._expand_to(force_mask, hint_data),
-                                          hint_data,
-                                          decoded_hint[hint.name].data)
-                cur_dense_hint.append(
-                    probing.DataPoint(
-                        name=hint.name, location=loc, type_=typ, data=hint_data))
-            for sparse_hint in sparse_hints:
-                # sparse_h_data = jnp.asarray(sparse_hint.data)
-                _, loc, typ = spec[sparse_hint.name]
-                assert loc == _Location.EDGE
-                if needs_noise:
-                    force_mask = jnp.repeat(force_mask,
-                                            jnp.sum(sparse_hint.data.nb_edges,
-                                                    axis=-1))
+            # 我其实不确定这地方的数据类型应该是什么，但先这样写吧
+            trace_h_i_data = _ArraySparse(
+                edges_with_optional_content=jnp.asarray(trace_h.data.edges_with_optional_content)[i],
+                nb_nodes=jnp.asarray(trace_h.data.nb_nodes),
+                nb_edges=jnp.asarray(trace_h.data.nb_edges))
+            if needs_noise:
+                pass
+            trace_h_i = _DataPoint(name=trace_h.name,
+                                     location=trace_h.location,
+                                     type_=trace_h.type_,
+                                     data=trace_h_i_data)
 
         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
-            inputs, cur_hint, mp_state.hiddens,
+            inputs, trace_h_i, mp_state.hiddens,
             batch_size, nb_nodes, mp_state.lstm_state,
             spec, encs, decs, repred)
 
@@ -259,12 +251,12 @@ class YZDNet(nets.Net):
 
     def _one_step_pred(
             self,
-            dense_inputs: _Trajectory,
-            sparse_inputs: _Trajectory,
-            dense_hints: _Trajectory,
-            hidden: _Array,
+            input_NODE_dp_list: _Trajectory,
+            input_EDGE_dp_list: _Trajectory,
+            trace_h_i: _DataPoint,
+            hidden: _chex_Array,
             batch_size: int,
-            nb_nodes_entire_batch: int,
+            # nb_nodes_entire_batch: int,
             lstm_state: Optional[hk.LSTMState],
             spec: _Spec,
             encs: Dict[str, List[hk.Module]],
@@ -274,18 +266,30 @@ class YZDNet(nets.Net):
         """Generates one-step predictions."""
 
         # Initialise empty node/edge/graph features and adjacency matrix.
+
+        # graph_fts = jnp.zeros((batch_size, self.hidden_dim))
+        # adj_mat = jnp.repeat(
+        #     jnp.expand_dims(jnp.eye(nb_nodes), 0), batch_size, axis=0)
+
+        info_dict = yzd_encoders.func(input_NODE_dp_list=input_NODE_dp_list,
+                                      input_EDGE_dp_list=input_EDGE_dp_list,
+                                      trace_h_i=trace_h_i)
+        nb_nodes_entire_batch = jnp.sum(info_dict['nb_nodes']).item()
+        nb_edges_entire_batch = jnp.sum(info_dict['nb_kgt_edges']).item()
         node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
-        edge_fts = jnp.zeros((batch_size, nb_nodes, nb_nodes, self.hidden_dim))
-        graph_fts = jnp.zeros((batch_size, self.hidden_dim))
-        adj_mat = jnp.repeat(
-            jnp.expand_dims(jnp.eye(nb_nodes), 0), batch_size, axis=0)
+        kgt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
 
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
+        # encode node fts
+
         dense_trajectories = [dense_inputs]
         if self.encode_hints:
             dense_trajectories.append(dense_hints)
 
+        for name in ['pos', 'if_pp', 'if_ip']:
+            dp = info_dict[name]
+            
         for dense_trajectory in dense_trajectories:
             for dp in dense_trajectory:
                 try:

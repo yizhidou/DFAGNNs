@@ -391,7 +391,7 @@ class SampleLoader:
                                                 np.expand_dims(trace_idx_col_sparse, -1),
                                                 np.expand_dims(trace_content_sparse, -1)],
                                                axis=1)
-            trace_sparse = _ArraySparse(edge_indices_with_optional_content=trace_sparse_data,
+            trace_sparse = _ArraySparse(edges_with_optional_content=trace_sparse_data,
                                         nb_nodes=(num_pp + selected_num_ip) if (
                                                 task_name == 'yzd_liveness' or
                                                 task_name == b'yzd_liveness') else num_pp,
@@ -461,13 +461,13 @@ class SampleLoader:
                                           np.expand_dims(kill_content_sparse, -1)],
                                          axis=1)
 
-            cfg_sparse_array = _ArraySparse(edge_indices_with_optional_content=cfg_sparse,
+            cfg_sparse_array = _ArraySparse(edges_with_optional_content=cfg_sparse,
                                             nb_nodes=num_pp + self.selected_num_ip,
                                             nb_edges=cfg_sparse.shape[0])
-            gen_sparse_array = _ArraySparse(edge_indices_with_optional_content=gen_sparse,
+            gen_sparse_array = _ArraySparse(edges_with_optional_content=gen_sparse,
                                             nb_nodes=num_pp + self.selected_num_ip,
                                             nb_edges=num_pp * self.selected_num_ip)
-            kill_sparse_array = _ArraySparse(edge_indices_with_optional_content=kill_sparse,
+            kill_sparse_array = _ArraySparse(edges_with_optional_content=kill_sparse,
                                              nb_nodes=num_pp + self.selected_num_ip,
                                              nb_edges=num_pp * self.selected_num_ip)
             return [cfg_sparse_array, gen_sparse_array, kill_sparse_array]
@@ -491,10 +491,10 @@ class SampleLoader:
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
 
-            cfg_sparse_array = _ArraySparse(edge_indices_with_optional_content=cfg_sparse,
+            cfg_sparse_array = _ArraySparse(edges_with_optional_content=cfg_sparse,
                                             nb_nodes=num_pp,
                                             nb_edges=cfg_sparse.shape[0])
-            gen_sparse_array = _ArraySparse(edge_indices_with_optional_content=gen_sparse,
+            gen_sparse_array = _ArraySparse(edges_with_optional_content=gen_sparse,
                                             nb_nodes=num_pp,
                                             nb_edges=num_pp * self.selected_num_ip)
             return [cfg_sparse_array, gen_sparse_array]
