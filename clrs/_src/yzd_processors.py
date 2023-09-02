@@ -1,38 +1,94 @@
+import chex
+import haiku as hk
+import jax
+import jax.numpy as jnp
 import jax.ops
 import numpy as np
 
-from clrs._src.processors import *
+# from clrs._src.processors import *
 
-_Array = chex.Array
+import abc
+from typing import Any, Callable, List, Optional, Tuple
+
+_chex_Array = chex.Array
+_Fn = Callable[..., Any]
+BIG_NUMBER = 1e6
+PROCESSOR_TAG = 'dfa_processor'
 
 
-class GATSparse(GAT):
+class DFAProcessor(hk.Module):
+    """Processor abstract base class."""
+
+    def __init__(self, name: str):
+        if not name.endswith(PROCESSOR_TAG):
+            name = name + '_' + PROCESSOR_TAG
+        super().__init__(name=name)
+
+    @abc.abstractmethod
+    def __call__(
+            self,
+            node_fts: _chex_Array,
+            gkt_edge_fts: _chex_Array,
+            hidden: _chex_Array,
+            cfg_edges: _chex_Array,
+            nb_cfg_edges_each_graph: _chex_Array,
+            gkt_edges: _chex_Array,
+            nb_gkt_edges_each_graph: _chex_Array,
+    ) -> Tuple[_chex_Array, Optional[_chex_Array]]:
+        """Processor inference step.
+
+        Returns:
+          Output of processor inference step as a 2-tuple of (node, edge)
+          embeddings. The edge embeddings can be None.
+        """
+        pass
+
+
+class GATSparse(DFAProcessor):
+    def __init__(
+            self,
+            out_size: int,
+            nb_heads: int,
+            activation: Optional[_Fn] = jax.nn.relu,
+            residual: bool = True,
+            use_ln: bool = False,
+            name: str = 'gat_aggr',
+    ):
+        super().__init__(name=name)
+        self.out_size = out_size
+        self.nb_heads = nb_heads
+        if out_size % nb_heads != 0:
+            raise ValueError('The number of attention heads must divide the width!')
+        self.head_size = out_size // nb_heads
+        self.activation = activation
+        self.residual = residual
+        self.use_ln = use_ln
+
     def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
             self,
-            node_fts: _Array,  # [N, hidden_dim]
-            graph_fts: _Array,  # [B, hidden_dim]
-            # adj_mat: _Array,
-            hidden: _Array,
+            node_fts: _chex_Array,  # [N, hidden_dim]
+            # graph_fts: _chex_Array,  # [B, hidden_dim]
+            hidden: _chex_Array,
             cfg_edges,  # [E_cfg, 2]
             nb_cfg_edges_each_graph,  # [B, ]
-            gk_edges,  # [E_gk, 2]
-            nb_gk_edges_each_graph,  # [B, ]
-            gk_edge_fts: _Array,  # [E_gk, hidden_dim]
+            gkt_edges,  # [E_gk, 2]
+            nb_gkt_edges_each_graph,  # [B, ]
+            gkt_edge_fts: _chex_Array,  # [E_gk, hidden_dim]
     ):
         """GAT inference step (sparse version by yzd)."""
 
-        batch_size, _ = graph_fts.shape
+        batch_size = nb_cfg_edges_each_graph.shape[0]
         nb_nodes = node_fts.shape[0]
         nb_cfg_edges = cfg_edges.shape[0]
-        nb_gk_edges = gk_edges.shape[0]
-        assert nb_cfg_edges_each_graph.shape[0] == batch_size
-        assert cfg_edges.shape[0] == nb_cfg_edges
-        assert jnp.sum(nb_cfg_edges_each_graph) == nb_cfg_edges
+        nb_gkt_edges = gkt_edges.shape[0]
+        # assert nb_cfg_edges_each_graph.shape[0] == batch_size
+        # assert cfg_edges.shape[0] == nb_cfg_edges
+        # assert jnp.sum(nb_cfg_edges_each_graph) == nb_cfg_edges
 
         cfg_row_indices = cfg_edges[:, 0]
         cfg_col_indices = cfg_edges[:, 1]
-        gk_row_indices = gk_edges[:, 0]
-        gk_col_indices = gk_edges[:, 1]
+        gkt_row_indices = gkt_edges[:, 0]
+        gkt_col_indices = gkt_edges[:, 1]
 
         cfg_z = jnp.concatenate([node_fts, hidden], axis=-1)  # [N, 2*hidden_dim]
         m = hk.Linear(self.out_size)
@@ -46,17 +102,17 @@ class GATSparse(GAT):
         a_1 = hk.Linear(self.nb_heads)
         a_2 = hk.Linear(self.nb_heads)
         a_e = hk.Linear(self.nb_heads)
-        a_g = hk.Linear(self.nb_heads)
+        # a_g = hk.Linear(self.nb_heads)
         cfg_att_1 = a_1(cfg_z)  # [N, H]
         cfg_att_2 = a_2(cfg_z)  # [N, H]
         # att_e = a_e(edge_fts)  # [E, H]
-        att_g = a_g(graph_fts)  # [B, H]
+        # att_g = a_g(graph_fts)  # [B, H]
 
         cfg_logits = (
                 cfg_att_1[cfg_row_indices] +  # + [E, H]
-                cfg_att_2[cfg_col_indices] +  # + [E, H]
-                # att_e +  # + [E, H]
-                jnp.repeat(a=att_g, repeats=nb_cfg_edges_each_graph, axis=0)  # + [E, H]
+                cfg_att_2[cfg_col_indices]  # + [E, H]
+            # att_e +  # + [E, H]
+            # + jnp.repeat(a=att_g, repeats=nb_cfg_edges_each_graph, axis=0)  # + [E, H]
         )  # = [E, H]
         cfg_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(cfg_logits),
                                              segment_ids=cfg_row_indices,
@@ -84,36 +140,36 @@ class GATSparse(GAT):
             ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
             cfg_hidden = ln(cfg_hidden)
 
-        gk_z = jnp.concatenate([node_fts, cfg_hidden], axis=-1)  # [N, 2*hidden_dim]
-        gk_att_1 = a_1(gk_z)  # [N, H]
-        gk_att_2 = a_2(gk_z)  # [N, H]
-        gk_att_e = a_e(gk_edge_fts)  # [E_gk, H]
+        gkt_z = jnp.concatenate([node_fts, cfg_hidden], axis=-1)  # [N, 2*hidden_dim]
+        gkt_att_1 = a_1(gkt_z)  # [N, H]
+        gkt_att_2 = a_2(gkt_z)  # [N, H]
+        gkt_att_e = a_e(gkt_edge_fts)  # [E_gk, H]
         # NOT SURE att_g
-        att_g = a_g(graph_fts)  # [B, H]
-        gk_logits = (
-                gk_att_1[gk_row_indices] +  # + [E_gk, H]
-                gk_att_2[gk_col_indices] +  # + [E_gk, H]
-                gk_att_e +  # + [E_gk, H]
-                jnp.repeat(a=att_g, repeats=nb_gk_edges_each_graph, axis=0)  # + [E, H]
+        # att_g = a_g(graph_fts)  # [B, H]
+        gkt_logits = (
+                gkt_att_1[gkt_row_indices] +  # + [E_gk, H]
+                gkt_att_2[gkt_col_indices] +  # + [E_gk, H]
+                gkt_att_e  # + [E_gk, H]
+            # + jnp.repeat(a=att_g, repeats=nb_gkt_edges_each_graph, axis=0)  # + [E, H]
         )  # = [E_gk, H]
-        gk_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(gk_logits),
-                                            segment_ids=gk_row_indices,
-                                            num_segments=nb_gk_edges)
+        gkt_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(gkt_logits),
+                                            segment_ids=gkt_row_indices,
+                                            num_segments=nb_gkt_edges)
 
-        gk_values = m(gk_z)  # [N, H*F]
-        gk_values = jnp.reshape(
-            gk_values,
-            gk_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
-        gk_values_source = gk_values[gk_col_indices]  # [E_gk, H, F]
+        gkt_values = m(gkt_z)  # [N, H*F]
+        gkt_values = jnp.reshape(
+            gkt_values,
+            gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
+        gkt_values_source = gkt_values[gkt_col_indices]  # [E_gk, H, F]
 
-        ret = gk_coefs * gk_values_source  # [E_gk, H, F]
+        ret = gkt_coefs * gkt_values_source  # [E_gk, H, F]
         ret = jax.ops.segment_sum(data=ret,
-                                  segment_ids=gk_row_indices,
+                                  segment_ids=gkt_row_indices,
                                   num_segments=nb_nodes)  # [N, H, F]
         ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [N, H*F]
 
         if self.residual:
-            ret += skip(gk_z)
+            ret += skip(gkt_z)
 
         if self.activation is not None:
             ret = self.activation(ret)
@@ -123,84 +179,6 @@ class GATSparse(GAT):
             ret = ln(ret)
 
         return ret, None  # pytype: disable=bad-return-type  # numpy-scalars
-
-
-class GATSparse_old(GAT):
-    def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
-            self,
-            node_fts: _Array,  # [N, hidden_dim]
-            edge_fts: _Array,  # [E, hidden_dim]
-            graph_fts: _Array,  # [B, hidden_dim]
-            # adj_mat: _Array,
-            hidden: _Array,
-            row_indices,  # [E, ]
-            col_indices,
-            nb_edges_each_graph,  # [B, ]
-    ):
-        """GAT inference step (sparse version by yzd)."""
-
-        batch_size, _ = graph_fts.shape
-        nb_nodes = node_fts.shape[0]
-        nb_edges = row_indices.shape[0]
-        assert nb_edges_each_graph.shape[0] == batch_size
-        assert col_indices.shape[0] == nb_edges
-        assert jnp.sum(nb_edges_each_graph) == nb_edges
-        # assert graph_fts.shape[:-1] == (b,)
-        # assert adj_mat.shape == (b, n, n)
-
-        z = jnp.concatenate([node_fts, hidden], axis=-1)  # [N, 2*hidden_dim]
-        m = hk.Linear(self.out_size)
-        skip = hk.Linear(self.out_size)
-
-        # bias_mat = (adj_mat - 1.0) * 1e9
-        # bias_mat = jnp.tile(bias_mat[..., None],
-        #                     (1, 1, 1, self.nb_heads))  # [B, N, N, H]
-        # bias_mat = jnp.transpose(bias_mat, (0, 3, 1, 2))  # [B, H, N, N]
-
-        a_1 = hk.Linear(self.nb_heads)
-        a_2 = hk.Linear(self.nb_heads)
-        a_e = hk.Linear(self.nb_heads)
-        a_g = hk.Linear(self.nb_heads)
-        att_1 = a_1(z)  # [N, H]
-        att_2 = a_2(z)  # [N, H]
-        att_e = a_e(edge_fts)  # [E, H]
-        att_g = a_g(graph_fts)  # [B, H]
-        keys_source = att_1[row_indices]  # [E, H]
-        queries_dest = att_2[col_indices]  # [E, H]
-        logits = (
-                att_1[row_indices] +  # + [E, H]
-                att_2[col_indices] +  # + [E, H]
-                att_e +  # + [E, H]
-                jnp.repeat(a=att_g, repeats=nb_edges_each_graph, axis=0)  # + [E, H]
-        )  # = [E, H]
-        coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(logits),
-                                         segment_ids=row_indices,
-                                         num_segments=nb_edges)
-
-        values = m(z)  # [N, H*F]
-        values = jnp.reshape(
-            values,
-            values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
-        values_source = values[col_indices]  # [E, H, F]
-
-        ret = coefs * values_source  # [E, H, F]
-        ret = jax.ops.segment_sum(data=ret,
-                                  segment_ids=row_indices,
-                                  num_segments=nb_nodes)  # [N, H, F]
-        ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [N, H*F]
-
-        if self.residual:
-            ret += skip(z)
-
-        if self.activation is not None:
-            ret = self.activation(ret)
-
-        if self.use_ln:
-            ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
-            ret = ln(ret)
-
-        return ret, None  # pytype: disable=bad-return-type  # numpy-scalars
-
 
 def unsorted_segment_softmax(logits, segment_ids, num_segments):
     """Returns softmax over each segment.
@@ -366,3 +344,33 @@ def get_triplet_msgs_sparse(z,  # [N, 2 * hidden_dim]
             jnp.expand_dims(tri_e_3, axis=1) +  # + (B, 1, N, N, H)
             jnp.expand_dims(tri_g, axis=(1, 2, 3))  # + (B, 1, 1, 1, H)
     )
+
+DFAProcessorFactory = Callable[[int], DFAProcessor]
+def get_processor_factory(kind: str,
+                          use_ln: bool,
+                          nb_triplet_fts: int,
+                          nb_heads: Optional[int] = None) -> DFAProcessorFactory:
+  """Returns a processor factory.
+
+  Args:
+    kind: One of the available types of processor.
+    use_ln: Whether the processor passes the output through a layernorm layer.
+    nb_triplet_fts: How many triplet features to compute.
+    nb_heads: Number of attention heads for GAT processors.
+  Returns:
+    A callable that takes an `out_size` parameter (equal to the hidden
+    dimension of the network) and returns a processor instance.
+  """
+  def _dfa_factory(out_size: int):
+    if kind == 'gat_dfa':
+      processor = GATSparse(
+          out_size=out_size,
+          nb_heads=nb_heads,
+          use_ln=use_ln,
+      )
+    else:
+      raise ValueError('Unexpected processor kind ' + kind)
+
+    return processor
+
+  return _factory

@@ -4,10 +4,10 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import chex
 
-from clrs._src import decoders
+from clrs._src import decoders, yzd_decoders
 from clrs._src import encoders, yzd_encoders
 from clrs._src import probing, yzd_probing
-from clrs._src import processors
+from clrs._src import yzd_processors
 from clrs._src import samplers, yzd_samplers
 from clrs._src import specs, yzd_specs
 from clrs._src import nets
@@ -26,11 +26,49 @@ _Stage = specs.Stage
 _Trajectory = yzd_samplers.Trajectory
 _Type = specs.Type
 
-_MessagePassingScanState = nets._MessagePassingScanState
+
+@chex.dataclass
+class _MessagePassingScanState:
+    pred_trace_h_i: _chex_Array
+    pred_trace_o: _chex_Array
+    hiddens: chex.Array
+    lstm_state: Optional[hk.LSTMState]
 
 
-class YZDNet(nets.Net):
+class YZDNet(hk.Module):
     """Building blocks (networks) used to encode and decode messages."""
+
+    def __init__(
+            self,
+            spec: List[_Spec],
+            hidden_dim: int,
+            encode_hints: bool,
+            decode_hints: bool,
+            processor_factory: yzd_processors.DFAProcessorFactory,
+            use_lstm: bool,
+            encoder_init: str,
+            dropout_prob: float,
+            hint_teacher_forcing: float,
+            hint_repred_mode='soft',
+            nb_dims=None,
+            nb_msg_passing_steps=1,
+            name: str = 'net',
+    ):
+        """Constructs a `Net`."""
+        super().__init__(name=name)
+
+        self._dropout_prob = dropout_prob
+        self._hint_teacher_forcing = hint_teacher_forcing
+        self._hint_repred_mode = hint_repred_mode
+        self.spec = spec
+        self.hidden_dim = hidden_dim
+        self.encode_hints = encode_hints
+        self.decode_hints = decode_hints
+        self.processor_factory = processor_factory
+        self.nb_dims = nb_dims
+        self.use_lstm = use_lstm
+        self.encoder_init = encoder_init
+        self.nb_msg_passing_steps = nb_msg_passing_steps
 
     def __call__(self, features_list: List[_Features], repred: bool,
                  algorithm_index: int,
@@ -186,15 +224,13 @@ class YZDNet(nets.Net):
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))
-            decoded_hint = decoders.postprocess(spec,
-                                                mp_state.hint_preds,
-                                                sinkhorn_temperature=0.1,
-                                                sinkhorn_steps=25,
-                                                hard=hard_postprocess)
+            if hard_postprocess:
+                decoded_trace_h_i = (mp_state.pred_trace_h_i > 0.0) * 1.0
+            else:
+                decoded_trace_h_i = jax.nn.sigmoid(mp_state.pred_trace_h_i)
+
         if repred and self.decode_hints and not first_step:
-            cur_hint = []
-            for hint_name in decoded_hint:
-                cur_hint.append(decoded_hint[hint_name])
+            trace_h_i = decoded_trace_h_i
         else:
             # cur_trace_h = []
             needs_noise = (self.decode_hints and not first_step and
@@ -208,41 +244,40 @@ class YZDNet(nets.Net):
             else:
                 force_mask = None
             # 我其实不确定这地方的数据类型应该是什么，但先这样写吧
-            trace_h_i_data = _ArraySparse(
-                edges_with_optional_content=jnp.asarray(trace_h.data.edges_with_optional_content)[i],
-                nb_nodes=jnp.asarray(trace_h.data.nb_nodes),
-                nb_edges=jnp.asarray(trace_h.data.nb_edges))
+            trace_h_i = jnp.asarray(trace_h.data.edges_with_optional_content)[i]
             if needs_noise:
-                pass
-            trace_h_i = _DataPoint(name=trace_h.name,
-                                     location=trace_h.location,
-                                     type_=trace_h.type_,
-                                     data=trace_h_i_data)
+                trace_h_i = jnp.where(nets._expand_to(force_mask, trace_h_i),
+                                      trace_h_i,
+                                      decoded_trace_h_i)
 
-        hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
-            inputs, trace_h_i, mp_state.hiddens,
-            batch_size, nb_nodes, mp_state.lstm_state,
-            spec, encs, decs, repred)
+        hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._one_step_pred(
+            input_NODE_dp_list=input_NODE_dp_list,
+            input_EDGE_dp_list=input_EDGE_dp_list,
+            trace_h_i=trace_h_i,
+            hidden=mp_state.hiddens,
+            lstm_state=mp_state.lstm_state,
+            encs=encs,
+            decs=decs,
+            repred=repred)
 
         if first_step:
-            output_preds = output_preds_cand
+            pred_trace_o = pred_trace_o_cand
         else:
-            output_preds = {}
-            for outp in mp_state.output_preds:
-                is_not_done = _is_not_done_broadcast(lengths, i,
-                                                     output_preds_cand[outp])
-                output_preds[outp] = is_not_done * output_preds_cand[outp] + (
-                        1.0 - is_not_done) * mp_state.output_preds[outp]
+            # output_preds = {}
+            is_not_done = nets._is_not_done_broadcast(lengths, i,
+                                                      pred_trace_o_cand)
+            pred_trace_o = is_not_done * pred_trace_o_cand + (
+                    1.0 - is_not_done) * mp_state.output_preds
 
         new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
             hint_preds=hint_preds,
-            output_preds=output_preds,
+            output_preds=pred_trace_o,
             hiddens=hiddens,
             lstm_state=lstm_state)
         # Save memory by not stacking unnecessary fields
         accum_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
             hint_preds=hint_preds if return_hints else None,
-            output_preds=output_preds if return_all_outputs else None,
+            output_preds=pred_trace_o if return_all_outputs else None,
             hiddens=None, lstm_state=None)
 
         # Complying to jax.scan, the first returned value is the state we carry over
@@ -253,12 +288,12 @@ class YZDNet(nets.Net):
             self,
             input_NODE_dp_list: _Trajectory,
             input_EDGE_dp_list: _Trajectory,
-            trace_h_i: _DataPoint,
+            trace_h_i: _chex_Array,
             hidden: _chex_Array,
-            batch_size: int,
+            # batch_size: int,
             # nb_nodes_entire_batch: int,
             lstm_state: Optional[hk.LSTMState],
-            spec: _Spec,
+            # spec: _Spec,
             encs: Dict[str, List[hk.Module]],
             decs: Dict[str, Tuple[hk.Module]],
             repred: bool,
@@ -277,43 +312,42 @@ class YZDNet(nets.Net):
         nb_nodes_entire_batch = jnp.sum(info_dict['nb_nodes']).item()
         nb_edges_entire_batch = jnp.sum(info_dict['nb_kgt_edges']).item()
         node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
-        kgt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
+        gkt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
 
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
         # encode node fts
-
-        dense_trajectories = [dense_inputs]
-        if self.encode_hints:
-            dense_trajectories.append(dense_hints)
-
         for name in ['pos', 'if_pp', 'if_ip']:
-            dp = info_dict[name]
-            
-        for dense_trajectory in dense_trajectories:
-            for dp in dense_trajectory:
-                try:
-                    dp = encoders.preprocess(dp, nb_nodes)
-                    assert dp.type_ != _Type.SOFT_POINTER
-                    adj_mat = encoders.accum_adj_mat(dp, adj_mat)
-                    encoder = encs[dp.name]
-                    edge_fts = encoders.accum_edge_fts(encoder, dp, edge_fts)
-                    node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
-                    graph_fts = encoders.accum_graph_fts(encoder, dp, graph_fts)
-                except Exception as e:
-                    raise Exception(f'Failed to process {dp}') from e
+            dp_content = info_dict[name]
+            encoder = encs[name]
+            encoding = encoder[0](dp_content)
+            node_fts += encoding
+        # encode edge fts
+        for name in ['gen_sparse', 'kill_sparse', 'trace_i_sparse']:
+            if name in info_dict:
+                dp_content = info_dict[name]
+            else:
+                continue
+            encoder = encs[name]
+            encoding = encoder[0](dp_content)
+            gkt_edge_fts += encoding
+        # encode hints
+        if self.encode_hints:
+            encoder = encs['trace_h_sparse']
+            encoding = encoder[0](info_dict['trace_h_i'])
+            gkt_edge_fts += encoding
 
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
             nxt_hidden, nxt_edge = self.processor(
-                node_fts,
-                edge_fts,
-                graph_fts,
-                adj_mat,
-                nxt_hidden,
-                batch_size=batch_size,
-                nb_nodes=nb_nodes,
+                node_fts=node_fts,
+                gkt_edge_fts=gkt_edge_fts,
+                hidden=nxt_hidden,
+                cfg_edges=info_dict['cfg_edges'],
+                nb_cfg_edges_each_graph=info_dict['nb_cfg_edges'],
+                gkt_edges=info_dict['gkt_edges'],
+                nb_gkt_edges_each_graph=info_dict['nb_gkt_edges']
             )
 
         if not repred:  # dropout only on training
@@ -328,25 +362,20 @@ class YZDNet(nets.Net):
 
         h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
         if nxt_edge is not None:
-            e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
+            e_t = jnp.concatenate([gkt_edge_fts, nxt_edge], axis=-1)
         else:
-            e_t = edge_fts
+            e_t = gkt_edge_fts
 
         # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Decode features and (optionally) hints.
-        hint_preds, output_preds = decoders.decode_fts(
+        pred_trace_o, pred_trace_h_i = yzd_decoders.decode_fts(
             decoders=decs,
-            spec=spec,
             h_t=h_t,
-            adj_mat=adj_mat,
-            edge_fts=e_t,
-            graph_fts=graph_fts,
-            inf_bias=self.processor.inf_bias,
-            inf_bias_edge=self.processor.inf_bias_edge,
-            repred=repred,
+            gkt_edge_fts=gkt_edge_fts,
+            gkt_edges=info_dict['gkt_edges']
         )
 
-        return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
+        return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
 
 def _data_dimensions(features: _Features):

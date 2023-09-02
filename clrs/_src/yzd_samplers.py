@@ -200,7 +200,7 @@ def _batch_EDGE_one_probe(EDGE_data_list):
     indices = np.repeat(np.arange(batch_size), nb_edges_batched)
     scattered = cumsum[indices]
     edges_batched[:, :2] += np.expand_dims(scattered, axis=1)
-    return _ArraySparse(edge_indices_with_optional_content=edges_batched,
+    return _ArraySparse(edges_with_optional_content=edges_batched,
                         nb_nodes=nb_nodes_batched,
                         nb_edges=nb_edges_batched)
 
@@ -211,7 +211,7 @@ def _batch_trace_h(trace_h_traj: Trajectory,
     # batch trace_h_sparce
     assert trace_h_traj
     batch_size = len(trace_h_traj)
-    padded_trace_h_edges = np.repeat(a=np.expand_dims(batched_trace_o.data.edge_indices_with_optional_content,
+    padded_trace_h_edges = np.repeat(a=np.expand_dims(batched_trace_o.data.edges_with_optional_content,
                                                       axis=0),
                                      repeats=min_steps,
                                      axis=0)  # [min_steps, nb_edges_entire_batch, 3]
@@ -221,19 +221,19 @@ def _batch_trace_h(trace_h_traj: Trajectory,
     hint_len = np.zeros(batch_size, dtype=int)
     for dp_idx, dp in enumerate(trace_h_traj):
         assert dp.name == 'trace_h_sparse'
-        dp_hint_len, dp_nb_edges, = dp.data.edge_indices_with_optional_content.shape[:2]
+        dp_hint_len, dp_nb_edges, = dp.data.edges_with_optional_content.shape[:2]
         assert dp_nb_edges == dp.data.nb_edges
-        tmp = accum_nb_nodes * np.ones_like(dp.data.edge_indices_with_optional_content)
+        tmp = accum_nb_nodes * np.ones_like(dp.data.edges_with_optional_content)
         tmp[..., -1] = 0
         padded_trace_h_edges[:dp_hint_len, start_nb_edges:start_nb_edges + dp_nb_edges,
-        :] = dp.data.edge_indices_with_optional_content + tmp
+        :] = dp.data.edges_with_optional_content + tmp
         start_nb_edges += dp_nb_edges
         assert batched_trace_o.data.nb_nodes[dp_idx] == dp.data.nb_nodes
         assert batched_trace_o.data.nb_edges[dp_idx] == dp_nb_edges
         accum_nb_nodes += dp.data.nb_nodes
         hint_len[dp_idx] = dp_hint_len
 
-    padded_trace_h = _ArraySparse(edge_indices_with_optional_content=padded_trace_h_edges,
+    padded_trace_h = _ArraySparse(edges_with_optional_content=padded_trace_h_edges,
                                   nb_nodes=batched_trace_o.data.nb_nodes,
                                   nb_edges=batched_trace_o.data.nb_edges)
     return _DataPoint(name='trace_h_sparse',
