@@ -208,9 +208,10 @@ class YZDNet(hk.Module):
                           # dense_hints: List[_DataPoint],
                           trace_h: _DataPoint,
                           repred: bool,
-                          lengths: chex.Array,
+                          lengths: _chex_Array,
                           batch_size: int,
                           nb_nodes: int,
+                          nb_gkt_edges: _chex_Array,
                           input_NODE_dp_list: _Trajectory,
                           input_EDGE_dp_list: _Trajectory,
                           first_step: bool,
@@ -220,6 +221,7 @@ class YZDNet(hk.Module):
                           return_hints: bool,
                           return_all_outputs: bool
                           ):
+        trace_h_i = jnp.asarray(trace_h.data.edges_with_optional_content)[i]
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or
@@ -228,24 +230,13 @@ class YZDNet(hk.Module):
                 decoded_trace_h_i = (mp_state.pred_trace_h_i > 0.0) * 1.0
             else:
                 decoded_trace_h_i = jax.nn.sigmoid(mp_state.pred_trace_h_i)
-
-        if repred and self.decode_hints and not first_step:
-            trace_h_i = decoded_trace_h_i
-        else:
-            # cur_trace_h = []
-            needs_noise = (self.decode_hints and not first_step and
-                           self._hint_teacher_forcing < 1.0)
-
-            if needs_noise:
-                # For noisy teacher forcing, choose which examples in the batch to force
+            if repred:
+                trace_h_i = decoded_trace_h_i
+            elif self._hint_teacher_forcing < 1.0:
                 force_mask = jax.random.bernoulli(
                     hk.next_rng_key(), self._hint_teacher_forcing,
                     (batch_size,))
-            else:
-                force_mask = None
-            # 我其实不确定这地方的数据类型应该是什么，但先这样写吧
-            trace_h_i = jnp.asarray(trace_h.data.edges_with_optional_content)[i]
-            if needs_noise:
+                force_mask = jnp.repeat(force_mask, nb_gkt_edges)
                 trace_h_i = jnp.where(nets._expand_to(force_mask, trace_h_i),
                                       trace_h_i,
                                       decoded_trace_h_i)
@@ -376,6 +367,41 @@ class YZDNet(hk.Module):
         )
 
         return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
+
+    def _construct_encoders_decoders(self):
+        """Constructs encoders and decoders, separate for each algorithm."""
+        encoders_ = []
+        decoders_ = []
+        enc_algo_idx = None
+        for (algo_idx, spec) in enumerate(self.spec):
+            enc = {}
+            dec = {}
+            for name, (stage, loc, t) in spec.items():
+                if stage == _Stage.INPUT or (
+                        stage == _Stage.HINT and self.encode_hints):
+                    # Build input encoders.
+                    if name == specs.ALGO_IDX_INPUT_NAME:
+                        if enc_algo_idx is None:
+                            enc_algo_idx = [hk.Linear(self.hidden_dim,
+                                                      name=f'{name}_enc_linear')]
+                        enc[name] = enc_algo_idx
+                    else:
+                        enc[name] = encoders.construct_encoders(
+                            stage, loc, t, hidden_dim=self.hidden_dim,
+                            init=self.encoder_init,
+                            name=f'algo_{algo_idx}_{name}')
+
+                if stage == _Stage.OUTPUT or (
+                        stage == _Stage.HINT and self.decode_hints):
+                    # Build output decoders.
+                    dec[name] = decoders.construct_decoders(
+                        loc, t, hidden_dim=self.hidden_dim,
+                        nb_dims=self.nb_dims[algo_idx][name],
+                        name=f'algo_{algo_idx}_{name}')
+            encoders_.append(enc)
+            decoders_.append(dec)
+
+        return encoders_, decoders_
 
 
 def _data_dimensions(features: _Features):
