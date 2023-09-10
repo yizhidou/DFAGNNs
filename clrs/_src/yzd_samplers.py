@@ -74,8 +74,8 @@ class YZDSampler(samplers.Sampler):
                     spec: Spec, min_length: int,
                     algorithm: samplers.Algorithm, *args, **kwargs):
         """Generate a batch of data."""
-        input_NODE_dp_list_list = []
-        input_EDGE_dp_list_list = []
+        input_NODE_dp_list_list = []  # pos, if_pp, if_ip
+        input_EDGE_dp_list_list = []  # cfg, gen, kill, trace_i
         trace_o_list_list = []
         trace_h_list = []
 
@@ -169,7 +169,6 @@ def _batch_NODE_input(input_NODE_dp_list_list: Trajectories):
             assert input_NODE_dp.name == input_NODE_dp_list_list[0][i].name
     return jax.tree_util.tree_map(lambda *x: np.concatenate(x), *input_NODE_dp_list_list)
 
-
 def _batch_EDGE_io(io_EDGE_dp_list_list: Trajectories):
     assert io_EDGE_dp_list_list
     for input_EDGE_dp_list in io_EDGE_dp_list_list:
@@ -241,3 +240,26 @@ def _batch_trace_h(trace_h_traj: Trajectory,
                       type_=specs.Type.MASK,
                       data=padded_trace_h), \
            hint_len
+
+def _batch_NODE_input_and_padding(input_NODE_dp_list_list: Trajectories,
+                                  padded_nb_nodes: int):
+    #   pos, if_ip, if_pp
+    batch_size = len(input_NODE_dp_list_list)
+    B_N = (batch_size, padded_nb_nodes)
+    padded_batched_NODE_dp_list = jax.tree_util.tree_map(lambda x: np.zeros(B_N + x.shape[1:]),
+                                                         input_NODE_dp_list_list[0])
+    nb_nodes = np.zeros(batch_size)
+    for sample_idx, input_NODE_dp_list_one_sample in enumerate(input_NODE_dp_list_list):
+        for dp_idx, dp in enumerate(input_NODE_dp_list_one_sample):
+            assert dp.name == padded_batched_NODE_dp_list[dp_idx].name
+            dp_nb_nodes = dp.data.shape[0]
+            padded_batched_NODE_dp_list[sample_idx].data[sample_idx, :dp_nb_nodes] = dp.data
+            if dp_idx > 0:
+                assert nb_nodes[dp_idx] == dp_nb_nodes
+            else:
+                nb_nodes[dp_idx] = dp_nb_nodes
+    return padded_batched_NODE_dp_list, nb_nodes
+
+# def _batch_EDGE_input_and_padding(input_EDGE_dp_list_list: Trajectories,
+#                                   padded_nb_nodes: int,
+#                                   padded_nb_edges: int):

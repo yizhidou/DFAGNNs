@@ -169,13 +169,13 @@ def yzd_finalize(probes: ProbesDict):
                         nb_nodes = probes[stage][loc][name]['data'][0].nb_nodes
                         for hint_idx, dp in enumerate(probes[stage][loc][name]['data']):
                             assert isinstance(dp, ArraySparse)
-                            assert dp.edge_indices_with_optional_content.ndim == 2
+                            assert dp.edges_with_optional_content.ndim == 2
 
                             edge_indices_with_optional_content_list.append(dp.edge_indices_with_optional_content)
                             assert dp.nb_edges == nb_edges
                             assert dp.nb_nodes == nb_nodes
                         probes[stage][loc][name]['data'] = ArraySparse(
-                            edge_indices_with_optional_content=np.stack(edge_indices_with_optional_content_list),
+                            edges_with_optional_content=np.stack(edge_indices_with_optional_content_list),
                             # [hint_len, nb_edges(num_pp*num_ip), 3]
                             nb_nodes=nb_nodes,
                             nb_edges=nb_edges
