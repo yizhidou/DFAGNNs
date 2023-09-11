@@ -123,6 +123,7 @@ class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
                  max_iteration: int,
                  max_num_pp: int,
+                 gkt_edges_rate: int,
                  if_sync: bool = False,
                  if_idx_reorganized: bool = True,
                  if_save: bool = False,
@@ -130,6 +131,8 @@ class SampleLoader:
                  selected_num_ip: int = 5):
         self.sample_path_processor = sample_path_processor
         self.max_iteration = max_iteration
+        self.expected_hint_len = self.max_iteration - 1
+        self.gkt_edges_rate = gkt_edges_rate
         self.max_num_pp = max_num_pp
         self.if_sync = if_sync
         self.if_idx_reorganized = if_idx_reorganized
