@@ -122,18 +122,19 @@ class YZDNet(nets.Net):
         for algorithm_index, features in zip(algorithm_indices, features_list):
             input_dp_list = features.input_dp_list
             trace_h = features.trace_h
+            edge_indices_dict = features.edge_indices_dict
             mask_dict = features.mask_dict
 
-            batch_size, nb_nodes = nets._data_dimensions(features)
+            batch_size, nb_nodes_padded = _dfa_data_dimensions(features)
 
             # YZDTODO 不知道为什么要减一 但是先不管了
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
-            hiddens = jnp.zeros((batch_size, nb_nodes, self.hidden_dim))
+            hiddens = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
 
             if self.use_lstm:
-                lstm_state = lstm_init(batch_size * nb_nodes)
+                lstm_state = lstm_init(batch_size * nb_nodes_padded)
                 lstm_state = jax.tree_util.tree_map(
-                    lambda x, b=batch_size, n=nb_nodes: jnp.reshape(x, [b, n, -1]),
+                    lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
                     lstm_state)
             else:
                 lstm_state = None
@@ -200,31 +201,27 @@ class YZDNet(nets.Net):
         return output_preds, hint_preds
 
     def dfa_msg_passing_step(self,
-                          mp_state: _MessagePassingScanState,
-                          i: int,
-                          # dense_hints: List[_DataPoint],
-                          trace_h: _DataPoint,
-                          repred: bool,
-                          lengths: _chex_Array,
-                          batch_size: int,
-                          nb_nodes: int,
-                          nb_gkt_edges: _chex_Array,
-                          input_NODE_dp_list: _Trajectory,
-                          input_EDGE_dp_list: _Trajectory,
-                          first_step: bool,
-                          spec: _Spec,
-                          encs: Dict[str, List[hk.Module]],
-                          decs: Dict[str, Tuple[hk.Module]],
-                          return_hints: bool,
-                          return_all_outputs: bool
-                          ):
+                             mp_state: _MessagePassingScanState,
+                             i: int,
+                             input_dp_list: _Trajectory,
+                             trace_h: _DataPoint,
+                             mask_dict: Dict[str, _chex_Array],
+                             batch_size: int,
+                             nb_nodes_padded: int,
+                             spec: _Spec,
+                             encs: Dict[str, List[hk.Module]],
+                             decs: Dict[str, Tuple[hk.Module]],
+                             repred: bool,
+                             first_step: bool,
+                             return_hints: bool,
+                             return_all_outputs: bool
+                             ):
         trace_h_i = jnp.asarray(trace_h.data)[i]
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))
             if hard_postprocess:
-                # 这地方不太对哈，最起码只能处理最后一位
                 decoded_trace_h_i = (mp_state.pred_trace_h_i > 0.0) * 1.0
             else:
                 decoded_trace_h_i = jax.nn.sigmoid(mp_state.pred_trace_h_i)
@@ -273,14 +270,13 @@ class YZDNet(nets.Net):
         # the second value is the output that will be stacked over steps.
         return new_mp_state, accum_mp_state
 
-    def _one_step_pred(
+    def _dfa_one_step_pred(
             self,
-            input_NODE_dp_list: _Trajectory,
-            input_EDGE_dp_list: _Trajectory,
+            input_dp_list: _Trajectory,
             trace_h_i: _chex_Array,
             hidden: _chex_Array,
-            # batch_size: int,
-            # nb_nodes_entire_batch: int,
+            batch_size: int,
+            nb_nodes_padded: int,
             lstm_state: Optional[hk.LSTMState],
             # spec: _Spec,
             encs: Dict[str, List[hk.Module]],
@@ -363,3 +359,11 @@ class YZDNet(nets.Net):
             gkt_edge_fts=gkt_edge_fts,
             gkt_edges=info_dict['gkt_edges']
         )
+
+
+def _dfa_data_dimensions(features: _Features) -> Tuple[int, int]:
+    """Returns (batch_size, nb_nodes)."""
+    for inp in features.input_dp_list:
+        if inp.location in [_Location.NODE, _Location.EDGE]:
+            return inp.data.shape[:2]
+    assert False

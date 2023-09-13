@@ -13,6 +13,7 @@ import collections
 Spec = specs.Spec
 Features = collections.namedtuple('Features', ['input_dp_list',
                                                'trace_h',
+                                               'edge_indices_dict',
                                                'mask_dict'])
 
 Feedback = collections.namedtuple('Feedback', ['features', 'trace_o'])
@@ -60,23 +61,23 @@ class DFASampler(samplers.Sampler):
         inp_dp_list_list = []  # pos, if_pp, if_ip, cfg, gen, (kill,) trace_i
         outp_dp_list_list = []  # trace_o
         hint_dp_list_list = []  # trace_h
-        nb_nodes_this_batch = np.zeros(num_samples, int)
-        nb_cfg_edges_this_batch = np.zeros(num_samples, int)
-        nb_gkt_edges_this_batch = np.zeros(num_samples, int)
-        hint_len_this_batch = np.zeros(num_samples, int)
+        edge_indices_dict_list = []
+        mask_dict_list = []
+        # nb_nodes_this_batch = np.zeros(num_samples, int)
+        # nb_cfg_edges_this_batch = np.zeros(num_samples, int)
+        # nb_gkt_edges_this_batch = np.zeros(num_samples, int)
+        # hint_len_this_batch = np.zeros(num_samples, int)
 
         num_created_samples = 0
         while num_created_samples < num_samples:
             sample_id = self._sample_data(*args, **kwargs)
             try:
-                nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len, probes = algorithm(self.sample_loader, sample_id)
+                edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
             except yzd_utils.YZDExcpetion:
                 continue
-            nb_nodes_this_batch[num_created_samples] = nb_nodes
-            nb_cfg_edges_this_batch[num_created_samples] = nb_cfg_edges
-            nb_gkt_edges_this_batch[num_created_samples] = nb_gkt_edges
-            hint_len_this_batch[num_created_samples] = hint_len
             num_created_samples += 1
+            edge_indices_dict_list.append(edge_indices_dict)
+            mask_dict_list.append(mask_dict)
             inp_dp_list, outp_dp_list, hint_dp_list = probing.split_stages(probes, spec)
             inp_dp_list_list.append(inp_dp_list)
             outp_dp_list_list.append(outp_dp_list)
@@ -86,11 +87,9 @@ class DFASampler(samplers.Sampler):
         batched_inp_dp_list = _batch_ioh(inp_dp_list_list)
         batched_trace_o = _batch_ioh(outp_dp_list_list)[0]
         batched_trace_h = _batch_ioh(hint_dp_list_list)[0]
-        mask_dict = dict(nb_nodes=nb_nodes_this_batch,
-                         nb_cfg_edges=nb_cfg_edges_this_batch,
-                         nb_gkt_edges=nb_gkt_edges_this_batch,
-                         hint_len=hint_len_this_batch)
-        return mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
+        batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x), *edge_indices_dict_list)
+        batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(mask_dict), *mask_dict_list)
+        return batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
 
     def next(self, batch_size: Optional[int] = None) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
@@ -104,7 +103,7 @@ class DFASampler(samplers.Sampler):
         if not batch_size:
             # YZDTODO should raise an error
             batch_size = 1
-        mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = self._make_batch(
+        batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,
             min_length=self.max_steps,
@@ -114,7 +113,8 @@ class DFASampler(samplers.Sampler):
 
         return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,
-                                          mask_dict=mask_dict),
+                                          edge_indices_dict=batched_edge_indices_dict,
+                                          mask_dict=batched_mask_dict),
                         trace_o=batched_trace_o)
 
 

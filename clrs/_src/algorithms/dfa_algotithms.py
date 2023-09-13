@@ -38,12 +38,12 @@ def dfa_liveness(dfa_sample_loader: yzd_utils.SampleLoader,
     expected_nb_nodes = dfa_sample_loader.max_num_pp + dfa_sample_loader.selected_num_ip
     expected_nb_cfg_edges = dfa_sample_loader.max_num_pp * dfa_sample_loader.gkt_edges_rate
     expected_nb_gkt_edge = dfa_sample_loader.max_num_pp * dfa_sample_loader.selected_num_ip
-    nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len = dfa_probing.dfa_finalize(probes=probes,
+    edge_indices_dict, mask_dict = dfa_probing.dfa_finalize(probes=probes,
                                                                               expected_nb_nodes=expected_nb_nodes,
                                                                               expected_nb_cfg_edges=expected_nb_cfg_edges,
                                                                               expected_nb_gkt_edge=expected_nb_gkt_edge,
                                                                               expected_hint_len=dfa_sample_loader.expected_hint_len)
-    return nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len, probes
+    return edge_indices_dict, mask_dict, probes
 
 
 def dfa_dominance(dfa_sample_loader: yzd_utils.SampleLoader,
@@ -77,12 +77,12 @@ def dfa_dominance(dfa_sample_loader: yzd_utils.SampleLoader,
     expected_nb_cfg_edges = dfa_sample_loader.max_num_pp * dfa_sample_loader.gkt_edges_rate
     expected_nb_gkt_edge = dfa_sample_loader.max_num_pp * dfa_sample_loader.selected_num_ip
 
-    nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len = dfa_probing.dfa_finalize(probes=probes,
+    edge_indices_dict, mask_dict = dfa_probing.dfa_finalize(probes=probes,
                                                                               expected_nb_nodes=expected_nb_nodes,
                                                                               expected_nb_cfg_edges=expected_nb_cfg_edges,
                                                                               expected_nb_gkt_edge=expected_nb_gkt_edge,
                                                                               expected_hint_len=dfa_sample_loader.expected_hint_len)
-    return nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len, probes
+    return edge_indices_dict, mask_dict, probes
 
 
 def dfa_reachability(dfa_sample_loader: yzd_utils.SampleLoader,
@@ -116,9 +116,9 @@ def dfa_reachability(dfa_sample_loader: yzd_utils.SampleLoader,
     expected_nb_cfg_edges = dfa_sample_loader.max_num_pp * dfa_sample_loader.gkt_edges_rate
     expected_nb_gkt_edge = dfa_sample_loader.max_num_pp * dfa_sample_loader.selected_num_ip
 
-    nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len = dfa_probing.dfa_finalize(probes=probes,
+    edge_indices_dict, mask_dict = dfa_probing.dfa_finalize(probes=probes,
                                                                               expected_nb_nodes=expected_nb_nodes,
                                                                               expected_nb_cfg_edges=expected_nb_cfg_edges,
                                                                               expected_nb_gkt_edge=expected_nb_gkt_edge,
                                                                               expected_hint_len=dfa_sample_loader.expected_hint_len)
-    return nb_nodes, nb_cfg_edges, nb_gkt_edges, hint_len, probes
+    return edge_indices_dict, mask_dict, probes
