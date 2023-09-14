@@ -13,7 +13,7 @@ import collections
 Spec = specs.Spec
 Features = collections.namedtuple('Features', ['input_dp_list',
                                                'trace_h',
-                                               'edge_indices_dict',
+                                               'padded_edge_indices_dict',
                                                'mask_dict'])
 
 Feedback = collections.namedtuple('Feedback', ['features', 'trace_o'])
@@ -113,7 +113,7 @@ class DFASampler(samplers.Sampler):
 
         return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,
-                                          edge_indices_dict=batched_edge_indices_dict,
+                                          padded_edge_indices_dict=batched_edge_indices_dict,
                                           mask_dict=batched_mask_dict),
                         trace_o=batched_trace_o)
 

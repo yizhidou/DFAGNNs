@@ -17,7 +17,7 @@ import jax
 import jax.numpy as jnp
 
 _chex_Array = chex.Array
-_DataPoint = probing.DataPoint
+# _DataPoint = probing.DataPoint
 _Features = dfa_sampler.Features
 _Location = specs.Location
 _Spec = specs.Spec
@@ -30,7 +30,7 @@ _Type = specs.Type
 class _MessagePassingScanState:
     pred_trace_h_i: _chex_Array
     pred_trace_o: _chex_Array
-    hiddens: chex.Array
+    hiddens: _chex_Array
     lstm_state: Optional[hk.LSTMState]
 
 
@@ -125,7 +125,7 @@ class YZDNet(nets.Net):
             edge_indices_dict = features.edge_indices_dict
             mask_dict = features.mask_dict
 
-            batch_size, nb_nodes_padded = _dfa_data_dimensions(features)
+            batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
 
             # YZDTODO 不知道为什么要减一 但是先不管了
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
@@ -204,7 +204,7 @@ class YZDNet(nets.Net):
                              mp_state: _MessagePassingScanState,
                              i: int,
                              input_dp_list: _Trajectory,
-                             trace_h: _DataPoint,
+                             trace_h: probing.DataPoint,
                              mask_dict: Dict[str, _chex_Array],
                              batch_size: int,
                              nb_nodes_padded: int,
@@ -216,15 +216,21 @@ class YZDNet(nets.Net):
                              return_hints: bool,
                              return_all_outputs: bool
                              ):
-        trace_h_i = jnp.asarray(trace_h.data)[i]
+        trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))
             if hard_postprocess:
-                decoded_trace_h_i = (mp_state.pred_trace_h_i > 0.0) * 1.0
+                decoded_trace_h_i = probing.DataPoint(name='trace_h',
+                                                      location=specs.Location.EDGE,
+                                                      type_=specs.Type.MASK,
+                                                      data=(mp_state.pred_trace_h_i > 0.0) * 1.0)
             else:
-                decoded_trace_h_i = jax.nn.sigmoid(mp_state.pred_trace_h_i)
+                decoded_trace_h_i = probing.DataPoint(name='trace_h',
+                                                      location=specs.Location.EDGE,
+                                                      type_=specs.Type.MASK,
+                                                      data=jax.nn.sigmoid(mp_state.pred_trace_h_i))
             if repred:
                 trace_h_i = decoded_trace_h_i
             elif self._hint_teacher_forcing < 1.0:
@@ -232,9 +238,13 @@ class YZDNet(nets.Net):
                     hk.next_rng_key(), self._hint_teacher_forcing,
                     (batch_size,))
                 # force_mask = jnp.repeat(force_mask, nb_gkt_edges)
-                trace_h_i = jnp.where(nets._expand_to(force_mask, trace_h_i),
-                                      trace_h_i,
-                                      decoded_trace_h_i)
+                force_masked_data = jnp.where(jnp.expand_dims(force_mask, axis=-1),
+                                              trace_h_i.data,
+                                              decoded_trace_h_i.data)
+                trace_h_i = probing.DataPoint(name='trace_h',
+                                              location=specs.Location.EDGE,
+                                              type_=specs.Type.MASK,
+                                              data=force_masked_data)
 
         hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._one_step_pred(
             input_NODE_dp_list=input_NODE_dp_list,
@@ -277,6 +287,9 @@ class YZDNet(nets.Net):
             hidden: _chex_Array,
             batch_size: int,
             nb_nodes_padded: int,
+            nb_gkt_edges_padded: int,
+            padded_edge_indices_dict: Dict[str, _chex_Array],
+            mask_dict: Dict[str, _chex_Array],
             lstm_state: Optional[hk.LSTMState],
             # spec: _Spec,
             encs: Dict[str, List[hk.Module]],
@@ -286,41 +299,28 @@ class YZDNet(nets.Net):
         """Generates one-step predictions."""
 
         # Initialise empty node/edge/graph features and adjacency matrix.
+        node_fts = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
+        gkt_edge_fts = jnp.zeros((batch_size, nb_gkt_edges_padded, self.hidden_dim))
 
-        # graph_fts = jnp.zeros((batch_size, self.hidden_dim))
-        # adj_mat = jnp.repeat(
-        #     jnp.expand_dims(jnp.eye(nb_nodes), 0), batch_size, axis=0)
-
-        info_dict = yzd_encoders.func(input_NODE_dp_list=input_NODE_dp_list,
-                                      input_EDGE_dp_list=input_EDGE_dp_list,
-                                      trace_h_i=trace_h_i)
-        nb_nodes_entire_batch = jnp.sum(info_dict['nb_nodes']).item()
-        nb_edges_entire_batch = jnp.sum(info_dict['nb_kgt_edges']).item()
-        node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
-        gkt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
+        # info_dict = yzd_encoders.func(input_NODE_dp_list=input_NODE_dp_list,
+        #                               input_EDGE_dp_list=input_EDGE_dp_list,
+        #                               trace_h_i=trace_h_i)
+        # nb_nodes_entire_batch = jnp.sum(info_dict['nb_nodes']).item()
+        # nb_edges_entire_batch = jnp.sum(info_dict['nb_kgt_edges']).item()
+        # node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
+        # gkt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
 
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
         # encode node fts
-        for name in ['pos', 'if_pp', 'if_ip']:
-            dp_content = info_dict[name]
-            encoder = encs[name]
-            encoding = encoder[0](dp_content)
-            node_fts += encoding
-        # encode edge fts
-        for name in ['gen_sparse', 'kill_sparse', 'trace_i_sparse']:
-            if name in info_dict:
-                dp_content = info_dict[name]
-            else:
-                continue
-            encoder = encs[name]
-            encoding = encoder[0](dp_content)
-            gkt_edge_fts += encoding
-        # encode hints
+        dp_list_to_encode = input_dp_list[:]
         if self.encode_hints:
-            encoder = encs['trace_h_sparse']
-            encoding = encoder[0](info_dict['trace_h_i'])
-            gkt_edge_fts += encoding
+            dp_list_to_encode.append(trace_h_i)
+
+        for dp in dp_list_to_encode:
+            encoder = encs[dp.name]
+            gkt_edge_fts = encoders.accum_edge_fts(encoder, dp, gkt_edge_fts)
+            node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
 
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         nxt_hidden = hidden
@@ -361,9 +361,21 @@ class YZDNet(nets.Net):
         )
 
 
-def _dfa_data_dimensions(features: _Features) -> Tuple[int, int]:
+def _dfa_data_dimensions(features: _Features) -> Tuple[int, int, int]:
     """Returns (batch_size, nb_nodes)."""
+    batch_size = None
+    nb_nodes_padded = None
+    nb_gkt_edges_padded = None
     for inp in features.input_dp_list:
-        if inp.location in [_Location.NODE, _Location.EDGE]:
-            return inp.data.shape[:2]
-    assert False
+        if inp.name in ['pos', 'if_pp', 'if_ip']:
+            if batch_size is None:
+                batch_size, nb_nodes_padded = inp.data.shape[:2]
+            else:
+                assert inp.data.shape[:2] == (batch_size, nb_nodes_padded)
+        if inp.name in ['gen', 'kill', 'trace_i']:
+            if nb_gkt_edges_padded is None:
+                nb_gkt_edges_padded = inp.data.shape[1]
+            else:
+                assert inp.data.shape[:2] == (batch_size, nb_gkt_edges_padded)
+
+    return batch_size, nb_nodes_padded, nb_gkt_edges_padded
