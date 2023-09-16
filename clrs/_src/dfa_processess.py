@@ -32,9 +32,6 @@ class DFAProcessor(hk.Module):
             hidden: _chex_Array,
             cfg_indices_padded: _chex_Array,
             gkt_indices_padded: _chex_Array,
-            nb_nodes_this_graph: int,
-            nb_cfg_edges_this_graph: int,
-            nb_gkt_edges_this_graph: int
     ) -> Tuple[_chex_Array, Optional[_chex_Array]]:
         """Processor inference step.
 
@@ -106,7 +103,7 @@ class GATSparse(DFAProcessor):
             cfg_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
         cfg_values_source = cfg_values[cfg_col_indices]  # [E_cfg, H, F]
 
-        cfg_hidden = cfg_coefs * cfg_values_source  # [E_cfg, H, F]
+        cfg_hidden = jnp.expand_dims(cfg_coefs, axis=-1) * cfg_values_source  # [E_cfg, H, F]
         cfg_hidden = jax.ops.segment_sum(data=cfg_hidden,
                                          segment_ids=cfg_row_indices,
                                          num_segments=nb_nodes_padded)  # [N, H, F]
@@ -135,7 +132,7 @@ class GATSparse(DFAProcessor):
         )  # = [E_gkt, H]
         gkt_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(gkt_logits),
                                              segment_ids=gkt_row_indices,
-                                             num_segments=nb_gkt_edges_this_graph)
+                                             num_segments=nb_gkt_edges_padded)
 
         gkt_values = m(gkt_z)  # [N, H*F]
         gkt_values = jnp.reshape(
@@ -143,10 +140,10 @@ class GATSparse(DFAProcessor):
             gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
         gkt_values_source = gkt_values[gkt_col_indices]  # [E_gkt, H, F]
 
-        ret = gkt_coefs * gkt_values_source  # [E_gkt, H, F]
+        ret = jnp.expand_dims(gkt_coefs, axis=-1) * gkt_values_source  # [E_gkt, H, F]
         ret = jax.ops.segment_sum(data=ret,
                                   segment_ids=gkt_row_indices,
-                                  num_segments=nb_nodes_this_graph)  # [N, H, F]
+                                  num_segments=nb_nodes_padded)  # [N, H, F]
         ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [N, H*F]
 
         if self.residual:
