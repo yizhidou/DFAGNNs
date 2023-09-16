@@ -24,7 +24,7 @@ import chex
 from clrs._src import decoders
 from clrs._src import encoders
 from clrs._src import probing
-from clrs._src import processors
+from clrs._src import dfa_processor
 from clrs._src import samplers
 from clrs._src import specs
 
@@ -76,7 +76,7 @@ class Net(hk.Module):
             hidden_dim: int,
             encode_hints: bool,
             decode_hints: bool,
-            processor_factory: processors.ProcessorFactory,
+            processor_factory: dfa_processors.ProcessorFactory,
             use_lstm: bool,
             encoder_init: str,
             dropout_prob: float,

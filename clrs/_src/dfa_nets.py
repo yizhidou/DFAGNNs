@@ -7,7 +7,7 @@ import chex
 from clrs._src import decoders, yzd_decoders
 from clrs._src import encoders, yzd_encoders
 from clrs._src import probing, yzd_probing
-from clrs._src import yzd_processors
+from clrs._src import dfa_processors
 from clrs._src import samplers, dfa_sampler
 from clrs._src import specs, yzd_specs
 from clrs._src import nets
@@ -43,7 +43,7 @@ class YZDNet(nets.Net):
             hidden_dim: int,
             encode_hints: bool,
             decode_hints: bool,
-            processor_factory: yzd_processors.ProcessorFactory,
+            processor_factory: dfa_processors.DFAProcessorFactory,
             use_lstm: bool,
             encoder_init: str,
             dropout_prob: float,
@@ -246,7 +246,8 @@ class YZDNet(nets.Net):
                                               type_=specs.Type.MASK,
                                               data=force_masked_data)
 
-        hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._one_step_pred(
+        hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._dfa_one_step_pred(
+
             input_NODE_dp_list=input_NODE_dp_list,
             input_EDGE_dp_list=input_EDGE_dp_list,
             trace_h_i=trace_h_i,
@@ -317,15 +318,13 @@ class YZDNet(nets.Net):
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
-            nxt_hidden, nxt_edge = self.processor(
+            nxt_hidden, nxt_edge = jax.vmap(self.processor(
                 node_fts=node_fts,
                 gkt_edge_fts=gkt_edge_fts,
-                hidden=nxt_hidden,
-                cfg_edges=info_dict['cfg_edges'],
-                nb_cfg_edges_each_graph=info_dict['nb_cfg_edges'],
-                gkt_edges=info_dict['gkt_edges'],
-                nb_gkt_edges_each_graph=info_dict['nb_gkt_edges']
-            )
+                hidden=hidden,
+                cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
+                gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
+            ))
 
         if not repred:  # dropout only on training
             nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
