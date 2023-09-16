@@ -112,7 +112,7 @@ def dfa_finalize(probes: _ProbesDict,
                                                                              repeated_trace_o],
                                                                             axis=0)
     # [T, E]
-    edge_indices_dict = dict(cfg_edge_indices=cfg_indices_padded,
+    edge_indices_dict = dict(cfg_indices_padded=cfg_indices_padded,
                              gkt_indices_padded=gkt_indices_padded)
     mask_dict = dict(nb_nodes=nb_nodes,
                      nb_cfg_edges=nb_cfg_edges,

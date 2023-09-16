@@ -302,14 +302,6 @@ class YZDNet(nets.Net):
         node_fts = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
         gkt_edge_fts = jnp.zeros((batch_size, nb_gkt_edges_padded, self.hidden_dim))
 
-        # info_dict = yzd_encoders.func(input_NODE_dp_list=input_NODE_dp_list,
-        #                               input_EDGE_dp_list=input_EDGE_dp_list,
-        #                               trace_h_i=trace_h_i)
-        # nb_nodes_entire_batch = jnp.sum(info_dict['nb_nodes']).item()
-        # nb_edges_entire_batch = jnp.sum(info_dict['nb_kgt_edges']).item()
-        # node_fts = jnp.zeros((nb_nodes_entire_batch, self.hidden_dim))
-        # gkt_edge_fts = jnp.zeros((nb_edges_entire_batch, self.hidden_dim))
-
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
         # encode node fts
