@@ -4,9 +4,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import chex
 
-from clrs._src import decoders, yzd_decoders
-from clrs._src import encoders, yzd_encoders
-from clrs._src import probing, yzd_probing
+from clrs._src import decoders, dfa_decoders
+from clrs._src import encoders
+from clrs._src import probing
 from clrs._src import dfa_processors
 from clrs._src import samplers, dfa_sampler
 from clrs._src import specs, yzd_specs
@@ -122,7 +122,7 @@ class YZDNet(nets.Net):
         for algorithm_index, features in zip(algorithm_indices, features_list):
             input_dp_list = features.input_dp_list
             trace_h = features.trace_h
-            edge_indices_dict = features.edge_indices_dict
+            padded_edge_indices_dict = features.padded_edge_indices_dict
             mask_dict = features.mask_dict
 
             batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
@@ -148,23 +148,25 @@ class YZDNet(nets.Net):
             # Do the first step outside of the scan because it has a different
             # computation graph.
             common_args = dict(
-                hints=hints,
-                repred=repred,
-                inputs=inputs,
+                input_dp_list=input_dp_list,
+                trace_h=trace_h,
+                mask_dict=mask_dict,
                 batch_size=batch_size,
-                nb_nodes=nb_nodes,
-                lengths=lengths,
-                spec=self.spec[algorithm_index],
+                nb_nodes_padded=nb_nodes_padded,
+                nb_gkt_edges_padded=nb_gkt_edges_padded,
+                padded_edge_indices_dict=padded_edge_indices_dict,
                 encs=self.encoders[algorithm_index],
                 decs=self.decoders[algorithm_index],
+                repred=repred,
                 return_hints=return_hints,
-                return_all_outputs=return_all_outputs,
+                return_all_outputs=return_all_outputs
             )
-            mp_state, lean_mp_state = self._msg_passing_step(
-                mp_state,
+            mp_state, lean_mp_state = self._dfa_msg_passing_step(
+                mp_state=mp_state,
                 i=0,
                 first_step=True,
-                **common_args)
+                **common_args
+            )
 
             # Then scan through the rest.
             scan_fn = functools.partial(
@@ -200,22 +202,23 @@ class YZDNet(nets.Net):
 
         return output_preds, hint_preds
 
-    def dfa_msg_passing_step(self,
-                             mp_state: _MessagePassingScanState,
-                             i: int,
-                             input_dp_list: _Trajectory,
-                             trace_h: probing.DataPoint,
-                             mask_dict: Dict[str, _chex_Array],
-                             batch_size: int,
-                             nb_nodes_padded: int,
-                             spec: _Spec,
-                             encs: Dict[str, List[hk.Module]],
-                             decs: Dict[str, Tuple[hk.Module]],
-                             repred: bool,
-                             first_step: bool,
-                             return_hints: bool,
-                             return_all_outputs: bool
-                             ):
+    def _dfa_msg_passing_step(self,
+                              mp_state: _MessagePassingScanState,
+                              i: int,
+                              input_dp_list: _Trajectory,
+                              trace_h: probing.DataPoint,
+                              mask_dict: Dict[str, _chex_Array],
+                              batch_size: int,
+                              nb_nodes_padded: int,
+                              nb_gkt_edges_padded: int,
+                              padded_edge_indices_dict: Dict[str, _chex_Array],
+                              encs: Dict[str, List[hk.Module]],
+                              decs: Dict[str, Tuple[hk.Module]],
+                              repred: bool,
+                              first_step: bool,
+                              return_hints: bool,
+                              return_all_outputs: bool
+                              ):
         trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
@@ -247,11 +250,13 @@ class YZDNet(nets.Net):
                                               data=force_masked_data)
 
         hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._dfa_one_step_pred(
-
-            input_NODE_dp_list=input_NODE_dp_list,
-            input_EDGE_dp_list=input_EDGE_dp_list,
+            input_dp_list=input_dp_list,
             trace_h_i=trace_h_i,
             hidden=mp_state.hiddens,
+            batch_size=batch_size,
+            nb_nodes_padded=nb_nodes_padded,
+            nb_gkt_edges_padded=nb_gkt_edges_padded,
+            padded_edge_indices_dict=padded_edge_indices_dict,
             lstm_state=mp_state.lstm_state,
             encs=encs,
             decs=decs,
@@ -261,7 +266,7 @@ class YZDNet(nets.Net):
             pred_trace_o = pred_trace_o_cand
         else:
             # output_preds = {}
-            is_not_done = nets._is_not_done_broadcast(lengths, i,
+            is_not_done = nets._is_not_done_broadcast(mask_dict['hint_len'], i,
                                                       pred_trace_o_cand)
             pred_trace_o = is_not_done * pred_trace_o_cand + (
                     1.0 - is_not_done) * mp_state.output_preds
@@ -290,9 +295,7 @@ class YZDNet(nets.Net):
             nb_nodes_padded: int,
             nb_gkt_edges_padded: int,
             padded_edge_indices_dict: Dict[str, _chex_Array],
-            mask_dict: Dict[str, _chex_Array],
             lstm_state: Optional[hk.LSTMState],
-            # spec: _Spec,
             encs: Dict[str, List[hk.Module]],
             decs: Dict[str, Tuple[hk.Module]],
             repred: bool,
@@ -344,12 +347,13 @@ class YZDNet(nets.Net):
 
         # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Decode features and (optionally) hints.
-        pred_trace_o, pred_trace_h_i = yzd_decoders.decode_fts(
+        pred_trace_o, pred_trace_h_i = dfa_decoders.decode_fts(
             decoders=decs,
             h_t=h_t,
             gkt_edge_fts=gkt_edge_fts,
-            gkt_edges=info_dict['gkt_edges']
+            gkt_edge_indices=padded_edge_indices_dict['gkt_indices_padded']
         )
+        return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
 
 def _dfa_data_dimensions(features: _Features) -> Tuple[int, int, int]:
