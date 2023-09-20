@@ -34,7 +34,7 @@ class _MessagePassingScanState:
     lstm_state: Optional[hk.LSTMState]
 
 
-class YZDNet(nets.Net):
+class DFANet(nets.Net):
     """Building blocks (networks) used to encode and decode messages."""
 
     def __init__(
@@ -68,7 +68,8 @@ class YZDNet(nets.Net):
                          nb_msg_passing_steps=nb_msg_passing_steps,
                          name=name)
 
-    def __call__(self, features_list: List[_Features], repred: bool,
+    def __call__(self, features_list: List[_Features],
+                 repred: bool,
                  algorithm_index: int,
                  return_hints: bool,
                  return_all_outputs: bool):

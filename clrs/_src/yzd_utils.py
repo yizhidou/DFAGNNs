@@ -124,11 +124,11 @@ class SampleLoader:
                  max_iteration: int,
                  max_num_pp: int,
                  gkt_edges_rate: int,
+                 selected_num_ip: int,
                  if_sync: bool = False,
                  if_idx_reorganized: bool = True,
                  if_save: bool = False,
-                 if_sparse: bool = True,
-                 selected_num_ip: int = 5):
+                 if_sparse: bool = True):
         self.sample_path_processor = sample_path_processor
         self.max_iteration = max_iteration
         self.expected_hint_len = self.max_iteration - 1
