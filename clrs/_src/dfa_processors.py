@@ -47,7 +47,7 @@ class GATSparse(DFAProcessor):
             activation: Optional[_Fn] = jax.nn.relu,
             residual: bool = True,
             use_ln: bool = False,
-            name: str = 'gat_aggr',
+            name: str = 'gat_sparse',
     ):
         super().__init__(name=name)
         self.out_size = out_size
@@ -345,9 +345,10 @@ DFAProcessorFactory = Callable[[int], DFAProcessor]
 
 
 def get_dfa_processor_factory(kind: str,
-                          use_ln: bool,
-                          # nb_triplet_fts: int,
-                          nb_heads: Optional[int] = None) -> DFAProcessorFactory:
+                              nb_heads: int,
+                              activation: Optional[_Fn],
+                              residual: bool,
+                              use_ln: bool) -> DFAProcessorFactory:
     """Returns a processor factory.
 
     Args:
@@ -362,11 +363,11 @@ def get_dfa_processor_factory(kind: str,
 
     def _dfa_factory(out_size: int):
         if kind == 'gat_dfa':
-            processor = GATSparse(
-                out_size=out_size,
-                nb_heads=nb_heads,
-                use_ln=use_ln,
-            )
+            processor = GATSparse(out_size=out_size,
+                                  nb_heads=nb_heads,
+                                  activation=activation,
+                                  residual=residual,
+                                  use_ln=use_ln)
         else:
             raise ValueError('Unexpected processor kind ' + kind)
 

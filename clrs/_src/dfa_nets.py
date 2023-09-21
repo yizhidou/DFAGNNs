@@ -51,7 +51,7 @@ class DFANet(nets.Net):
             hint_repred_mode='soft',
             nb_dims=None,
             nb_msg_passing_steps=1,
-            name: str = 'net',
+            name: str = 'dfa_net',
     ):
         """Constructs a `Net`."""
         super().__init__(spec=spec,
