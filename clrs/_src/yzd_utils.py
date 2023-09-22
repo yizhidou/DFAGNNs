@@ -4,7 +4,8 @@ import numpy as np
 from programl.proto import *
 import programl
 import random
-from clrs._src import yzd_probing
+import jax
+from clrs._src import yzd_probing, yzd_specs
 
 _ArraySparse = yzd_probing.ArraySparse
 _ArrayDense = yzd_probing.ArrayDense
@@ -22,6 +23,8 @@ class YZDExcpetion(Exception):
     # too much program points error
     TOO_MANY_PP_NODES = 4
 
+    UNRECOGNIZED_ACTIVATION_TYPE = 5
+
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
         self.error_code = error_code
@@ -33,41 +36,17 @@ class YZDExcpetion(Exception):
             msg = 'This sample has previously been recorded as errored!'
         elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
             msg = 'This sample is newly recognized errored, we have now recorded it!'
+        elif self.error_code == self.TOO_FEW_IP_NODES:
+            msg = 'This sample has too few IP nodes, so we drop it!'
+        elif self.error_code == self.TOO_MANY_PP_NODES:
+            msg = 'This sample has too many PP nodes, so we drop it!'
+        elif self.error_code == self.UNRECOGNIZED_ACTIVATION_TYPE:
+            msg = 'Unrecognized activation type! please check your spelling!'
         else:
-            msg = 'unrecognized error!'
+            msg = 'Unrecognized error!'
         if self.sample_id:
             msg += f' sample_id: {self.sample_id}'
         return msg
-
-
-class ParamsParser:
-    def __init__(self, params_savepath):
-        if not os.path.isfile(params_savepath):
-            pass
-            # YZDTODO raise an error
-        self.params_savepath = params_savepath
-        self.params_dict = self._parse_params()
-        self.max_iteration = 0
-
-    def _parse_params(self):
-        params_dict = dict()
-        with open(self.params_savepath) as params_reader:
-            for line in params_reader.readlines():
-                param_name, param_value = line.split(': ')
-                param_name = param_name.strip()
-                if param_name == 'sourcegraph_dir':
-                    params_dict['sourcegraph_dir'] = param_value.strip()
-                if param_name == 'dataset_savedir':
-                    params_dict['dataset_savedir'] = param_value.strip()
-        return params_dict
-
-    @property
-    def sourcegraph_dir(self):
-        return self.params_dict['sourcegraph_dir']
-
-    @property
-    def dataset_savedir(self):
-        return self.params_dict['dataset_savedir']
 
 
 class SamplePathProcessor:
@@ -501,3 +480,26 @@ class SampleLoader:
                                             nb_nodes=num_pp,
                                             nb_edges=num_pp * self.selected_num_ip)
             return [cfg_sparse_array, gen_sparse_array]
+
+
+def _get_activation(activation_str):
+    if activation_str == 'relu':
+        return jax.nn.relu
+    raise YZDExcpetion(YZDExcpetion.UNRECOGNIZED_ACTIVATION_TYPE)
+
+
+def parse_params(params_filepath: str):
+    with open(params_filepath) as json_loader:
+        params_dict = json.load(json_loader)
+    params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
+    del params_dict['processor']['activation_name']
+
+    sample_id_list = []
+    with open(params_dict['dfa_sampler']['sample_id_savepath']) as sample_reader:
+        for line in sample_reader.readlines():
+            sample_id_list.append(line.strip())
+    params_dict['dfa_sampler']['sample_id_list'] = sample_id_list
+    del params_dict['dfa_sampler']['sample_id_savepath']
+
+    params_dict['dfa_net']['spec'] = yzd_specs.DFASPECS[params_dict['task']['task_name']]
+    return params_dict

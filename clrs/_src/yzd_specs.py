@@ -3,7 +3,7 @@ from clrs._src import specs
 
 Spec = specs.Spec
 
-YZDSPECS = types.MappingProxyType({
+DFASPECS = types.MappingProxyType({
     'yzd_liveness': {
         'pos': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.SCALAR),
         'cfg_sparse': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
