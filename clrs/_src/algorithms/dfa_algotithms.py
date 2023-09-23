@@ -1,20 +1,20 @@
 import numpy as np
 
-from clrs._src import yzd_utils
-from clrs._src import yzd_specs, specs
+from clrs._src import dfa_utils
+from clrs._src import dfa_specs, specs
 from clrs._src import probing, dfa_probing
 
 
-def dfa_liveness(dfa_sample_loader: yzd_utils.SampleLoader,
+def dfa_liveness(dfa_sample_loader: dfa_utils.SampleLoader,
                  sample_id: str):
     '''sparse version'''
-    assert not dfa_sample_loader.if_sparse
-    # max_hint_len = yzd_sample_loader.max_iteration - 1
-    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='yzd_liveness',
+    # assert not dfa_sample_loader.if_sparse
+    # max_hint_len = dfa_sample_loader.max_iteration - 1
+    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='dfa_liveness',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse, kill_sparse = array_list
     num_nodes = if_pp.shape[0]
-    probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_liveness'])
+    probes = probing.initialize(spec=dfa_specs.DFASPECS['dfa_liveness'])
     probing.push(probes,
                  specs.Stage.INPUT,
                  next_probe={
@@ -46,14 +46,14 @@ def dfa_liveness(dfa_sample_loader: yzd_utils.SampleLoader,
     return edge_indices_dict, mask_dict, probes
 
 
-def dfa_dominance(dfa_sample_loader: yzd_utils.SampleLoader,
+def dfa_dominance(dfa_sample_loader: dfa_utils.SampleLoader,
                   sample_id: str):
-    assert dfa_sample_loader.if_sparse
-    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='yzd_dominance',
+    # assert dfa_sample_loader.if_sparse
+    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='dfa_dominance',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse = array_list
     num_nodes = if_pp.shape[0]
-    probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_dominance'])
+    probes = probing.initialize(spec=dfa_specs.DFASPECS['dfa_dominance'])
     probing.push(probes,
                  specs.Stage.INPUT,
                  next_probe={
@@ -85,14 +85,14 @@ def dfa_dominance(dfa_sample_loader: yzd_utils.SampleLoader,
     return edge_indices_dict, mask_dict, probes
 
 
-def dfa_reachability(dfa_sample_loader: yzd_utils.SampleLoader,
+def dfa_reachability(dfa_sample_loader: dfa_utils.SampleLoader,
                      sample_id: str):
-    assert dfa_sample_loader.if_sparse
-    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='yzd_reachability',
+    # assert dfa_sample_loader.if_sparse
+    trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='dfa_reachability',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse = array_list
     num_nodes = if_pp.shape[0]
-    probes = probing.initialize(spec=yzd_specs.YZDSPECS['yzd_reachability'])
+    probes = probing.initialize(spec=dfa_specs.DFASPECS['dfa_reachability'])
     probing.push(probes,
                  specs.Stage.INPUT,
                  next_probe={

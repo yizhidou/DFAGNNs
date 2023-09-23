@@ -2,7 +2,7 @@ import haiku as hk
 import jax
 
 from clrs._src import dfa_sampler
-from clrs._src import yzd_utils
+from clrs._src import dfa_utils
 from clrs._src import dfa_nets
 from clrs._src import dfa_processors
 
@@ -10,7 +10,7 @@ from clrs._src import dfa_processors
 def FeedbackListGenerator(dfa_sampler: dfa_sampler.DFASampler,
                           batch_size: int):
     while True:
-        dfa_sampler.next(batch_size=batch_size)
+        yield dfa_sampler.next(batch_size=batch_size)
 
 
 def forward_dfa_nets(processor_params_dict,
@@ -25,9 +25,9 @@ def forward_dfa_nets(processor_params_dict,
 
 if __name__ == '__main__':
     test_params_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/test_params/test_params_v0.json'
-    test_params_dict = yzd_utils.parse_params(params_filepath=test_params_savepath)
-    test_sample_path_processor = yzd_utils.SamplePathProcessor(**test_params_dict['sample_path_processor'])
-    test_sample_loader = yzd_utils.SampleLoader(sample_path_processor=test_sample_path_processor,
+    test_params_dict = dfa_utils.parse_params(params_filepath=test_params_savepath)
+    test_sample_path_processor = dfa_utils.SamplePathProcessor(**test_params_dict['sample_path_processor'])
+    test_sample_loader = dfa_utils.SampleLoader(sample_path_processor=test_sample_path_processor,
                                                 **test_params_dict['sample_loader'])
     test_sampler = dfa_sampler.DFASampler(task_name=test_params_dict['task']['task_name'],
                                           sample_id_list=test_params_dict['dfa_sampler']['sample_id_list'],

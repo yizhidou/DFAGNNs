@@ -1,6 +1,6 @@
 from clrs._src import samplers
 from clrs._src import algorithms
-from clrs._src import yzd_utils
+from clrs._src import dfa_utils
 from clrs._src import specs, dfa_specs
 from clrs._src import probing
 from typing import List, Optional, Tuple
@@ -31,7 +31,7 @@ class DFASampler(samplers.Sampler):
                  task_name: str,
                  sample_id_list: List[str],
                  seed: int,
-                 sample_loader: yzd_utils.SampleLoader
+                 sample_loader: dfa_utils.SampleLoader
                  ):
         if not task_name in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability']:
             raise NotImplementedError(f'No implementation of algorithm {task_name}.')
@@ -73,7 +73,7 @@ class DFASampler(samplers.Sampler):
             sample_id = self._sample_data(*args, **kwargs)
             try:
                 edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
-            except yzd_utils.YZDExcpetion:
+            except dfa_utils.YZDExcpetion:
                 continue
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
@@ -110,7 +110,7 @@ class DFASampler(samplers.Sampler):
             algorithm=self._algorithm)
         # assert np.array_equal(lengths, sparse_lengths)
         assert len(batched_inp_dp_list) == 7 if self.task_name == 'dfa_liveness' else 6
-
+        print('a batch has done!')
         return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,
                                           padded_edge_indices_dict=batched_edge_indices_dict,
@@ -121,7 +121,7 @@ class DFASampler(samplers.Sampler):
 def build_dfa_sampler(task_name: str,
                       sample_id_list: List[str],
                       seed: int,
-                      sample_loader: yzd_utils.SampleLoader
+                      sample_loader: dfa_utils.SampleLoader
                       ) -> Tuple[DFASampler, Spec]:
     """Builds a sampler. See `Sampler` documentation."""
 

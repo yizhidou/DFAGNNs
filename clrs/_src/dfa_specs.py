@@ -4,7 +4,7 @@ from clrs._src import specs
 # Spec = specs.Spec
 
 DFASPECS = types.MappingProxyType({
-    'yzd_liveness': {
+    'dfa_liveness': {
         'pos': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.SCALAR),
         'cfg': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
         'gen': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
@@ -16,7 +16,7 @@ DFASPECS = types.MappingProxyType({
         # 'time': (specs.Stage.HINT, specs.Location.GRAPH, specs.Type.SCALAR),
         'trace_o': (specs.Stage.OUTPUT, specs.Location.EDGE, specs.Type.MASK)
     },
-    'yzd_dominance': {
+    'dfa_dominance': {
         'pos': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.SCALAR),
         'cfg': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
         'gen': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
@@ -25,7 +25,7 @@ DFASPECS = types.MappingProxyType({
         'trace_h': (specs.Stage.HINT, specs.Location.EDGE, specs.Type.MASK),
         # 'time': (specs.Stage.HINT, specs.Location.GRAPH, specs.Type.SCALAR),
         'trace_o': (specs.Stage.OUTPUT, specs.Location.EDGE, specs.Type.MASK)},
-    'yzd_reachability': {
+    'dfa_reachability': {
         'pos': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.SCALAR),
         'cfg': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
         'gen': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),

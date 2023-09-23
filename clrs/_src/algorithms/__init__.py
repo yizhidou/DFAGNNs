@@ -60,3 +60,7 @@ from clrs._src.algorithms.strings import kmp_matcher
 from clrs._src.algorithms.yzd_dfa_algorithms import yzd_liveness
 from clrs._src.algorithms.yzd_dfa_algorithms import yzd_dominance
 from clrs._src.algorithms.yzd_dfa_algorithms import yzd_reachability
+
+from clrs._src.algorithms.dfa_algotithms import dfa_liveness
+from clrs._src.algorithms.dfa_algotithms import dfa_reachability
+from clrs._src.algorithms.dfa_algotithms import dfa_dominance
