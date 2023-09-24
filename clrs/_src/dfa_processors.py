@@ -362,7 +362,7 @@ def get_dfa_processor_factory(kind: str,
     """
 
     def _dfa_factory(out_size: int):
-        if kind == 'gat_dfa':
+        if kind == 'dfa_gat':
             processor = GATSparse(out_size=out_size,
                                   nb_heads=nb_heads,
                                   activation=activation,

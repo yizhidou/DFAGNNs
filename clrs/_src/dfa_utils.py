@@ -5,7 +5,7 @@ from programl.proto import *
 import programl
 import random
 import jax
-from clrs._src import dfa_probing, dfa_specs
+from clrs._src import dfa_specs, dfa_processors
 
 _Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
@@ -128,8 +128,9 @@ class SampleLoader:
         # self.rng = np.random.default_rng()
 
     def load_a_sample(self, task_name, sample_id):
-        if sample_id in self.sample_path_processor.errored_sample_ids:
-            raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
+        print('errored samples are not deduplicated!!!')
+        # if sample_id in self.sample_path_processor.errored_sample_ids:
+        #     raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
         print(f'sample {sample_id} is loading...')
         if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
             trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
@@ -152,7 +153,7 @@ class SampleLoader:
 
 
         else:
-            cpp_out, cpperror = programl.yzd_analyze(task_name=task_name,
+            cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
                                                      max_iteration=self.max_iteration,
                                                      program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
                                                          sample_id),
@@ -162,7 +163,10 @@ class SampleLoader:
                                                          task_name, sample_id) if self.if_save else None,
                                                      if_sync=self.if_sync,
                                                      if_idx_reorganized=self.if_idx_reorganized)
+            print('utils line 165 done!')
             if len(cpperror) > 0:
+                print('utils line 167 cpperror > 0!')
+                print(cpperror)
                 self.sample_path_processor.errored_sample_ids[sample_id] = 1
                 with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
                     error_sample_writer.write(sample_id + '\n')
@@ -259,6 +263,7 @@ class SampleLoader:
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
+        print(f'num_pp = {num_pp}; num_ip = {num_ip}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
         # if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
@@ -283,7 +288,8 @@ class SampleLoader:
                     continue
                 # 相应值填进trace_matrix里
                 trace_content_base[np.repeat(source_node, num_target_node), np.array(target_node_list) - num_pp] = 1
-            trace_content_sparse = trace_content_base[np.arange(num_pp), selected_ip_indices_base]
+            # print(f'util line 289, shape of trace_content_base = {trace_content_base.shape}')
+            trace_content_sparse = trace_content_base[:, selected_ip_indices_base]
             # [num_pp, selected_num_ip]
             trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
             if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
@@ -303,6 +309,7 @@ class SampleLoader:
             trace_sparse = trace_sparse_data
 
             trace_list.append(trace_sparse)
+        print(f'length of trace_list = {len(trace_list)}')
         return trace_list, selected_ip_indices_base, num_pp
 
     def _get_node_type(self, task_name: Union[str, bytes],
@@ -332,7 +339,6 @@ class SampleLoader:
             # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
             num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
             # num_node = num_pp + num_ip
-            print(f'num_pp = {num_pp}; num_ip = {num_ip}; total = {num_pp + num_ip}')
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
@@ -395,6 +401,16 @@ class SampleLoader:
             return [cfg_sparse_array, gen_sparse_array]
 
 
+def _get_analyze_task_name(task_name: str):
+    if task_name == 'dfa_liveness':
+        return 'yzd_liveness'
+    elif task_name == 'dfa_reachability':
+        return 'yzd_reachability'
+    elif task_name == 'dfa_dominance':
+        return 'yzd_dominance'
+    return task_name
+
+
 def _get_activation(activation_str):
     if activation_str == 'relu':
         return jax.nn.relu
@@ -404,9 +420,6 @@ def _get_activation(activation_str):
 def parse_params(params_filepath: str):
     with open(params_filepath) as json_loader:
         params_dict = json.load(json_loader)
-    params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
-    del params_dict['processor']['activation_name']
-
     sample_id_list = []
     with open(params_dict['dfa_sampler']['sample_id_savepath']) as sample_reader:
         for line in sample_reader.readlines():
@@ -415,4 +428,6 @@ def parse_params(params_filepath: str):
     del params_dict['dfa_sampler']['sample_id_savepath']
 
     params_dict['dfa_net']['spec'] = dfa_specs.DFASPECS[params_dict['task']['task_name']]
+    params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
+    del params_dict['processor']['activation_name']
     return params_dict

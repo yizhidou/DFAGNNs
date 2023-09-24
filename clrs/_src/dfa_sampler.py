@@ -70,11 +70,15 @@ class DFASampler(samplers.Sampler):
 
         num_created_samples = 0
         while num_created_samples < num_samples:
+            print(f'num_created_samples = {num_created_samples}; num_samples = {num_samples}')
             sample_id = self._sample_data(*args, **kwargs)
+            print(f'in dfa_sampler, sample_id {sample_id} has been sampled~')
             try:
                 edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
-            except dfa_utils.YZDExcpetion:
-                continue
+            except dfa_utils.YZDExcpetion as err:
+                print(err.error_code)
+                return
+                # continue
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
             mask_dict_list.append(mask_dict)
@@ -103,6 +107,7 @@ class DFASampler(samplers.Sampler):
         if not batch_size:
             # YZDTODO should raise an error
             batch_size = 1
+        print(f'sampler line 110, batch_size = {batch_size}')
         batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,

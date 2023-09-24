@@ -54,6 +54,8 @@ def dfa_finalize(probes: _ProbesDict,
                                                                     axis=0),
                                                      hint_len)
                     #   [t, E-e]
+                    print(
+                        f'expected nb_gkt_edges = {expected_nb_gkt_edge}; the shape of stacked_trace_h = {stacked_trace_h.shape}; the shape of trace_h_zero_padding = {trace_h_zero_padding.shape}')
                     trace_h_padded = np.concatenate([stacked_trace_h, trace_h_zero_padding],
                                                     axis=0)
                     #   [t, E]
@@ -61,7 +63,7 @@ def dfa_finalize(probes: _ProbesDict,
 
                 else:
                     len(probes[stage][loc][name]['data']) == 1
-                    old_data = probes[stage][loc][name]['data']
+                    old_data = probes[stage][loc][name]['data'][0]
                     if name in ['pos', 'if_pp', 'if_ip']:
                         nb_nodes = old_data.shape[0]
                         if name == 'pos':

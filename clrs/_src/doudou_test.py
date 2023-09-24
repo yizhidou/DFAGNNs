@@ -29,6 +29,10 @@ if __name__ == '__main__':
     test_sample_path_processor = dfa_utils.SamplePathProcessor(**test_params_dict['sample_path_processor'])
     test_sample_loader = dfa_utils.SampleLoader(sample_path_processor=test_sample_path_processor,
                                                 **test_params_dict['sample_loader'])
+
+    # test_sample_loader.load_a_sample(task_name='dfa_dominance',
+    #                                  sample_id='poj104_103.12081.4')
+
     test_sampler = dfa_sampler.DFASampler(task_name=test_params_dict['task']['task_name'],
                                           sample_id_list=test_params_dict['dfa_sampler']['sample_id_list'],
                                           seed=test_params_dict['dfa_sampler']['seed'],
