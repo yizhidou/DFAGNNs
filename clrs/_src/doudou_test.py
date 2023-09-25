@@ -13,14 +13,22 @@ def FeedbackListGenerator(dfa_sampler: dfa_sampler.DFASampler,
         yield dfa_sampler.next(batch_size=batch_size)
 
 
-def forward_dfa_nets(processor_params_dict,
-                     dfa_net_params_dict):
+def _dfa_nets(processor_params_dict,
+              dfa_net_params_dict,
+              features_list,
+              repred: bool,
+              algorithm_index: int,
+              return_hints: bool,
+              return_all_outputs: bool
+              ):
     test_processor_factory = dfa_processors.get_dfa_processor_factory(**processor_params_dict)
-    return dfa_nets.DFANet(**dfa_net_params_dict,
-                           processor_factory=test_processor_factory,
-                           hint_repred_mode='soft',
-                           nb_dims=None,  # this is used by categorical decoder
-                           name='dfa_net')
+    _net = dfa_nets.DFANet(**dfa_net_params_dict,
+                           processor_factory=test_processor_factory)
+    return _net(features_list=features_list,
+                repred=repred,
+                algorithm_index=algorithm_index,
+                return_hints=return_hints,
+                return_all_outputs=return_all_outputs)
 
 
 if __name__ == '__main__':
@@ -41,3 +49,30 @@ if __name__ == '__main__':
     feedback_generator = FeedbackListGenerator(dfa_sampler=test_sampler,
                                                batch_size=test_params_dict['dfa_sampler']['batch_size'])
     feedback_list = [next(feedback_generator) for _ in range(2)]
+
+    test_processor_factory = dfa_processors.get_dfa_processor_factory(**test_params_dict['processor'])
+
+
+    def _use_net(features_list,
+                 repred,
+                 algorithm_index,
+                 return_hints,
+                 return_all_outputs):
+        return dfa_nets.DFANet(processor_factory=test_processor_factory,
+                               **test_params_dict['dfa_net'])(features_list=features_list,
+                                                              repred=repred,
+                                                              algorithm_index=algorithm_index,
+                                                              return_hints=return_hints,
+                                                              return_all_outputs=return_all_outputs)
+
+
+    net_fn = hk.transform(_use_net)
+
+    print(f'the type of transformed_net is: {type(net_fn)}')
+    feature_list = [feedback_list[0].features]
+    params = net_fn.init(rng=jax.random.PRNGKey(42),
+                         features_list=feature_list,
+                         repred=False,
+                         algorithm_index=-1,
+                         return_hints=True,
+                         return_all_outputs=True)

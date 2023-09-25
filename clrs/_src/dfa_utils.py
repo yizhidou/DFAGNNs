@@ -13,15 +13,15 @@ taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='
 
 class YZDExcpetion(Exception):
     # the current sample has been previously recognized as errored
-    RECORDED_ERRORED_SAMPLE = 1
+    RECORDED_ERRORED_SAMPLE = 0
     # newly recognized error sample
-    NEWLY_ERRORED_SAMPLE = 2
+    ANALYZE_ERRORED_SAMPLE = 1
     # too few interested points error (less than selected num)
-    TOO_FEW_IP_NODES = 3
+    TOO_FEW_IP_NODES = 2
     # too much program points error
-    TOO_MANY_PP_NODES = 4
+    TOO_MANY_PP_NODES = 3
 
-    UNRECOGNIZED_ACTIVATION_TYPE = 5
+    UNRECOGNIZED_ACTIVATION_TYPE = 4
 
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
@@ -62,14 +62,14 @@ class SamplePathProcessor:
         else:
             with open(errorlog_savepath) as errored_reader:
                 for line in errored_reader.readlines():
-                    self.errored_sample_ids[line.strip()] = 1
+                    errored_sample_id = line.split(':')[0].strip()
+                    self.errored_sample_ids[errored_sample_id] = 1
         self.errorlog_savepath = errorlog_savepath
         self.dataset_savedir = dataset_savedir
         self.statistics_savepath = statistics_savepath
 
     def sourcegraph_savepath(self, sample_id):
         # YZDTODO  这里没有写完
-        print(f'sample_id = {sample_id}')
         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
 
     def _trace_savedir(self, task_name):
@@ -128,10 +128,10 @@ class SampleLoader:
         # self.rng = np.random.default_rng()
 
     def load_a_sample(self, task_name, sample_id):
-        print('errored samples are not deduplicated!!!')
-        # if sample_id in self.sample_path_processor.errored_sample_ids:
-        #     raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
-        print(f'sample {sample_id} is loading...')
+        # print('errored samples are not deduplicated!!!')
+        if sample_id in self.sample_path_processor.errored_sample_ids:
+            raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
+        # print(f'{sample_id} is loading (util line 134)...')
         if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
             trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
             with open(trace_savepath, 'rb') as result_reader:
@@ -163,27 +163,32 @@ class SampleLoader:
                                                          task_name, sample_id) if self.if_save else None,
                                                      if_sync=self.if_sync,
                                                      if_idx_reorganized=self.if_idx_reorganized)
-            print('utils line 165 done!')
+            # print('utils line 165 done!')
             if len(cpperror) > 0:
                 print('utils line 167 cpperror > 0!')
                 print(cpperror)
                 self.sample_path_processor.errored_sample_ids[sample_id] = 1
                 with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                    error_sample_writer.write(sample_id + '\n')
-                raise YZDExcpetion(YZDExcpetion.NEWLY_ERRORED_SAMPLE, sample_id)
+                    error_sample_writer.write(f'{sample_id}: {YZDExcpetion.ANALYZE_ERRORED_SAMPLE}\n')
+                raise YZDExcpetion(YZDExcpetion.ANALYZE_ERRORED_SAMPLE, sample_id)
+            # print('utils line 174 done!')
             sample_statistics, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
+            # print('utils line 176 done!')
             if self.sample_path_processor.statistics_savepath:
                 self._merge_statistics(sample_id, sample_statistics)
             trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
                                                                                               trace_bytes=trace_chunck,
                                                                                               sample_id=sample_id,
                                                                                               selected_num_ip=self.selected_num_ip)
+            # print('utils line 183 done!')
             array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                          edges_str=edge_chunck,
                                                          selected_ip_indices_base=selected_ip_indices_base)
+            # print('utils line 187 done!')
             if_pp, if_ip = self._get_node_type(task_name=task_name,
                                                selected_ip_indices_base=selected_ip_indices_base,
                                                num_pp=num_pp)
+            # print('utils line 191 done!')
             return trace_list, array_list, if_pp, if_ip
 
     def _merge_statistics(self, sample_id, new_statistics: Dict):
@@ -252,18 +257,18 @@ class SampleLoader:
         if num_pp > self.max_num_pp:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(sample_id + '\n')
+                error_sample_writer.write(f'{sample_id}: {YZDExcpetion.TOO_MANY_PP_NODES}\n')
             raise YZDExcpetion(YZDExcpetion.TOO_MANY_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
         if num_ip < selected_num_ip:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(sample_id + '\n')
+                error_sample_writer.write(f'{sample_id}: {YZDExcpetion.TOO_FEW_IP_NODES}\n')
             raise YZDExcpetion(YZDExcpetion.TOO_FEW_IP_NODES, sample_id)
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
-        print(f'num_pp = {num_pp}; num_ip = {num_ip}')
+        # print(f'num_pp = {num_pp}; num_ip = {num_ip}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
         # if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
@@ -309,7 +314,7 @@ class SampleLoader:
             trace_sparse = trace_sparse_data
 
             trace_list.append(trace_sparse)
-        print(f'length of trace_list = {len(trace_list)}')
+        # print(f'length of trace_list = {len(trace_list)}')
         return trace_list, selected_ip_indices_base, num_pp
 
     def _get_node_type(self, task_name: Union[str, bytes],

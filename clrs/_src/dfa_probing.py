@@ -52,12 +52,13 @@ def dfa_finalize(probes: _ProbesDict,
                         # assert gkt_zero_padding is not None
                     trace_h_zero_padding = np.repeat(np.expand_dims(np.zeros(expected_nb_gkt_edge - nb_gkt_edges),
                                                                     axis=0),
-                                                     hint_len)
+                                                     repeats=hint_len,
+                                                     axis=0)
                     #   [t, E-e]
-                    print(
-                        f'expected nb_gkt_edges = {expected_nb_gkt_edge}; the shape of stacked_trace_h = {stacked_trace_h.shape}; the shape of trace_h_zero_padding = {trace_h_zero_padding.shape}')
+                    # print(
+                        # f'expected nb_gkt_edges = {expected_nb_gkt_edge}; the real nb_gkt_edges = {nb_gkt_edges}; hint_len = {hint_len}; the shape of stacked_trace_h = {stacked_trace_h.shape}; the shape of trace_h_zero_padding = {trace_h_zero_padding.shape}')
                     trace_h_padded = np.concatenate([stacked_trace_h, trace_h_zero_padding],
-                                                    axis=0)
+                                                    axis=1)
                     #   [t, E]
 
 
