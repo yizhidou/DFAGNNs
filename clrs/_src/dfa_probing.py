@@ -56,7 +56,7 @@ def dfa_finalize(probes: _ProbesDict,
                                                      axis=0)
                     #   [t, E-e]
                     # print(
-                        # f'expected nb_gkt_edges = {expected_nb_gkt_edge}; the real nb_gkt_edges = {nb_gkt_edges}; hint_len = {hint_len}; the shape of stacked_trace_h = {stacked_trace_h.shape}; the shape of trace_h_zero_padding = {trace_h_zero_padding.shape}')
+                    # f'expected nb_gkt_edges = {expected_nb_gkt_edge}; the real nb_gkt_edges = {nb_gkt_edges}; hint_len = {hint_len}; the shape of stacked_trace_h = {stacked_trace_h.shape}; the shape of trace_h_zero_padding = {trace_h_zero_padding.shape}')
                     trace_h_padded = np.concatenate([stacked_trace_h, trace_h_zero_padding],
                                                     axis=1)
                     #   [t, E]
@@ -87,6 +87,8 @@ def dfa_finalize(probes: _ProbesDict,
                         assert name in ['gen', 'kill', 'trace_i', 'trace_o']
                         if nb_gkt_edges is None:
                             nb_gkt_edges = old_data.shape[0]
+                            # print(
+                            #     f'dfa_probing line 90, nb_gkt_edges = {nb_gkt_edges}; expected_nb_gkt_edges = {expected_nb_gkt_edge}')
                             gkt_indices_padding = padding_node_idx * np.ones((expected_nb_gkt_edge - nb_gkt_edges, 2),
                                                                              int)
                             # gkt_padding = np.concatenate(
@@ -101,9 +103,12 @@ def dfa_finalize(probes: _ProbesDict,
                         gkt_indices_padded = np.concatenate([old_data[:, :2],
                                                              gkt_indices_padding])
                         #   [E, 2]
+                        # print(f'dfa_probing line 106, gkt_indices_padded: {gkt_indices_padded.shape}')
                         probes[stage][loc][name]['data'] = np.concatenate([old_data[:, -1],
                                                                            np.zeros(
                                                                                expected_nb_gkt_edge - nb_gkt_edges)])
+                        # tmp = probes[stage][loc][name]['data']
+                        # print(f'dfa_probing line 110-110, padded gkt_data: {tmp.shape}')
 
     padded_trace_o = probes[_Stage.OUTPUT][_Location.EDGE]['trace_o']['data']
     # [E, ]

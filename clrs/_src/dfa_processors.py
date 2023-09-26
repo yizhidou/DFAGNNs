@@ -61,34 +61,42 @@ class GATSparse(DFAProcessor):
 
     def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
             self,
-            node_fts: _chex_Array,  # [N, hidden_dim]
-            gkt_edge_fts: _chex_Array,  # [E_gkt, hidden_dim]
-            hidden: _chex_Array,  # [N, hidden_dim]
-            cfg_indices_padded: _chex_Array,  # [E_cfg, 2]
-            gkt_indices_padded: _chex_Array,  # [E_gkt, 2]
+            node_fts: _chex_Array,  # [B, N, hidden_dim]
+            gkt_edge_fts: _chex_Array,  # [B, E_gkt, hidden_dim]
+            hidden: _chex_Array,  # [B, N, hidden_dim]
+            cfg_indices_padded: _chex_Array,  # [B, E_cfg, 2]
+            gkt_indices_padded: _chex_Array,  # [B, E_gkt, 2]
     ):
         """GAT inference step (sparse version by yzd)."""
+        print('in dfa_processor line 71')
+        print(
+            f'node_fts: {node_fts.shape};\ngkt_edge_fts: {gkt_edge_fts.shape};\nhidden: {hidden.shape};\ncfg_indices_padded: {cfg_indices_padded.shape};\ngkt_indices_padded: {gkt_indices_padded.shape}')
         nb_nodes_padded = node_fts.shape[0]
         nb_cfg_edges_padded, nb_gkt_edges_padded = cfg_indices_padded.shape[0], gkt_indices_padded.shape[0]
-        cfg_row_indices = cfg_indices_padded[:, 0]  # [E_cfg, ]
+        cfg_row_indices = cfg_indices_padded[:, 0]  # [B, E_cfg, ]
         cfg_col_indices = cfg_indices_padded[:, 1]
-        gkt_row_indices = gkt_indices_padded[:, 0]  # [E_gkt, ]
+        gkt_row_indices = gkt_indices_padded[:, 0]  # [B, E_gkt, ]
         gkt_col_indices = gkt_indices_padded[:, 1]
+        print('dfa_processor line 80')
+        print(f'cfg_r_indices: {cfg_row_indices.shape}; cfg_c_indices: {cfg_col_indices.shape}')
+        print(f'gkt_r_indices: {gkt_row_indices.shape}; gkt_c_indices: {gkt_col_indices.shape}')
 
         cfg_z = jnp.concatenate([node_fts, hidden], axis=-1)  # [N, 2*hidden_dim]
+        print(f'dfa_processor line 85, cfg_z: {cfg_z.shape}')
         m = hk.Linear(self.out_size)
         skip = hk.Linear(self.out_size)
 
         a_1 = hk.Linear(self.nb_heads)
         a_2 = hk.Linear(self.nb_heads)
         a_e = hk.Linear(self.nb_heads)
-        cfg_att_1 = a_1(cfg_z)  # [N, H]
-        cfg_att_2 = a_2(cfg_z)  # [N, H]
-
+        cfg_att_1 = a_1(cfg_z)  # [B, N, H]
+        cfg_att_2 = a_2(cfg_z)  # [B, N, H]
+        print(f'cfg_processor line 91, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')
         cfg_logits = (
                 cfg_att_1[cfg_row_indices] +  # + [E_cfg, H]
                 cfg_att_2[cfg_col_indices]  # + [E_cfg, H]
         )  # = [E_cfg, H]
+        print(f'dfa_processor line 95, shape of cfg_logits is: {cfg_logits.shape}')
         cfg_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(cfg_logits),
                                              segment_ids=cfg_row_indices,
                                              num_segments=nb_cfg_edges_padded)
@@ -101,10 +109,13 @@ class GATSparse(DFAProcessor):
         cfg_values_source = cfg_values[cfg_col_indices]  # [E_cfg, H, F]
 
         cfg_hidden = jnp.expand_dims(cfg_coefs, axis=-1) * cfg_values_source  # [E_cfg, H, F]
+        print(f'dfa_processor line 104, shape of cfg_hidden is: {cfg_hidden.shape}')
         cfg_hidden = jax.ops.segment_sum(data=cfg_hidden,
                                          segment_ids=cfg_row_indices,
                                          num_segments=nb_nodes_padded)  # [N, H, F]
+        print(f'dfa_processor line 108, shape of cfg_hidden is: {cfg_hidden.shape}')
         cfg_hidden = jnp.reshape(cfg_hidden, cfg_hidden.shape[:-2] + (self.out_size,))  # [N, H*F]
+        print(f'dfa_processor line 110, shape of cfg_hidden is: {cfg_hidden.shape}')
 
         if self.residual:
             cfg_hidden += skip(cfg_z)

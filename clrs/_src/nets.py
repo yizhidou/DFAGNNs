@@ -347,7 +347,7 @@ class Net(hk.Module):
                     # Build output decoders.
                     dec[name] = decoders.construct_decoders(
                         loc, t, hidden_dim=self.hidden_dim,
-                        nb_dims=self.nb_dims[algo_idx][name],
+                        nb_dims=None if self.nb_dims is None else self.nb_dims[algo_idx][name],
                         name=f'algo_{algo_idx}_{name}')
             encoders_.append(enc)
             decoders_.append(dec)

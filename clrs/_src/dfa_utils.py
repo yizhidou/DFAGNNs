@@ -432,7 +432,7 @@ def parse_params(params_filepath: str):
     params_dict['dfa_sampler']['sample_id_list'] = sample_id_list
     del params_dict['dfa_sampler']['sample_id_savepath']
 
-    params_dict['dfa_net']['spec'] = dfa_specs.DFASPECS[params_dict['task']['task_name']]
+    params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
     params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
     del params_dict['processor']['activation_name']
     return params_dict

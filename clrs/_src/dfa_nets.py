@@ -141,8 +141,8 @@ class DFANet(nets.Net):
                 lstm_state = None
 
             mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
-                hint_preds=None,
-                output_preds=None,
+                pred_trace_h_i=None,
+                pred_trace_o=None,
                 hiddens=hiddens,
                 lstm_state=lstm_state)
 
@@ -320,6 +320,8 @@ class DFANet(nets.Net):
             node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
 
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        print('dfa_nets line 323, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(
+            padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
             nxt_hidden, nxt_edge = jax.vmap(self.processor(
