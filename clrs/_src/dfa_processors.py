@@ -71,18 +71,22 @@ class GATSparse(DFAProcessor):
         print('in dfa_processor line 71')
         print(
             f'node_fts: {node_fts.shape};\ngkt_edge_fts: {gkt_edge_fts.shape};\nhidden: {hidden.shape};\ncfg_indices_padded: {cfg_indices_padded.shape};\ngkt_indices_padded: {gkt_indices_padded.shape}')
-        nb_nodes_padded = node_fts.shape[0]
-        nb_cfg_edges_padded, nb_gkt_edges_padded = cfg_indices_padded.shape[0], gkt_indices_padded.shape[0]
-        cfg_row_indices = cfg_indices_padded[:, 0]  # [B, E_cfg, ]
-        cfg_col_indices = cfg_indices_padded[:, 1]
-        gkt_row_indices = gkt_indices_padded[:, 0]  # [B, E_gkt, ]
-        gkt_col_indices = gkt_indices_padded[:, 1]
-        print('dfa_processor line 80')
-        print(f'cfg_r_indices: {cfg_row_indices.shape}; cfg_c_indices: {cfg_col_indices.shape}')
-        print(f'gkt_r_indices: {gkt_row_indices.shape}; gkt_c_indices: {gkt_col_indices.shape}')
+        nb_nodes_padded = node_fts.shape[-2]
+        nb_cfg_edges_padded, nb_gkt_edges_padded = cfg_indices_padded.shape[-2], gkt_indices_padded.shape[-2]
+        print(
+            f'dfa_processor line 76, \nnb_nodes_padded = {nb_nodes_padded}; \nnb_cfg_edges_padded = {nb_cfg_edges_padded}; \nnb_gkt_edges_padded = {nb_gkt_edges_padded}')
+        cfg_row_indices = cfg_indices_padded[..., 0, None]  # [B, E_cfg, ]
+        cfg_col_indices = cfg_indices_padded[..., 1, None]
+        gkt_row_indices = gkt_indices_padded[..., 0, None]  # [B, E_gkt, ]
+        gkt_col_indices = gkt_indices_padded[..., 1, None]
+        print('dfa_processor line 82')
+        print(
+            f'cfg_r_indices: {cfg_row_indices.shape}; cfg_c_indices: {cfg_col_indices.shape}; type: {cfg_col_indices.dtype}')
+        print(
+            f'gkt_r_indices: {gkt_row_indices.shape}; gkt_c_indices: {gkt_col_indices.shape}; type: {gkt_col_indices.dtype}')
 
         cfg_z = jnp.concatenate([node_fts, hidden], axis=-1)  # [N, 2*hidden_dim]
-        print(f'dfa_processor line 85, cfg_z: {cfg_z.shape}')
+        print(f'dfa_processor line 89, cfg_z: {cfg_z.shape}')
         m = hk.Linear(self.out_size)
         skip = hk.Linear(self.out_size)
 
@@ -91,31 +95,56 @@ class GATSparse(DFAProcessor):
         a_e = hk.Linear(self.nb_heads)
         cfg_att_1 = a_1(cfg_z)  # [B, N, H]
         cfg_att_2 = a_2(cfg_z)  # [B, N, H]
-        print(f'cfg_processor line 91, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')
-        cfg_logits = (
-                cfg_att_1[cfg_row_indices] +  # + [E_cfg, H]
-                cfg_att_2[cfg_col_indices]  # + [E_cfg, H]
-        )  # = [E_cfg, H]
-        print(f'dfa_processor line 95, shape of cfg_logits is: {cfg_logits.shape}')
-        cfg_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(cfg_logits),
-                                             segment_ids=cfg_row_indices,
-                                             num_segments=nb_cfg_edges_padded)
+        print(f'cfg_processor line 98, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')
+        # cfg_logits = (
+        #         cfg_att_1[cfg_row_indices] +  # + [E_cfg, H]
+        #         cfg_att_2[cfg_col_indices]  # + [E_cfg, H]
+        # )  # = [E_cfg, H]
+        cfg_logits = (jnp.take_along_axis(arr=cfg_att_1, indices=cfg_row_indices, axis=1)
+                      +
+                      jnp.take_along_axis(arr=cfg_att_2, indices=cfg_col_indices, axis=1))
+        print(f'dfa_processor line 106, shape of cfg_logits is: {cfg_logits.shape}')
+
+        @jax.vmap
+        def _unsorted_segment_softmax_batched(logits, segment_ids):
+            return unsorted_segment_softmax(logits=logits,
+                                            segment_ids=segment_ids,
+                                            num_segments=nb_cfg_edges_padded)
+
+        cfg_coefs = _unsorted_segment_softmax_batched(logits=jax.nn.leaky_relu(cfg_logits),
+                                                      segment_ids=jnp.squeeze(cfg_row_indices, -1))
+        # cfg_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(cfg_logits),
+        #                                      segment_ids=cfg_row_indices,
+        #                                      num_segments=nb_cfg_edges_padded)
         # [E_cfg, H]
 
         cfg_values = m(cfg_z)  # [N, H*F]
+        print(f'dfa_processor line 122, cfg_values: {cfg_values.shape}; cfg_coefs: {cfg_coefs.shape}')
         cfg_values = jnp.reshape(
             cfg_values,
             cfg_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
-        cfg_values_source = cfg_values[cfg_col_indices]  # [E_cfg, H, F]
-
+        print(f'dfa_processor line 126, cfg_values: {cfg_values.shape}')
+        # cfg_values_source = cfg_values[cfg_col_indices]  # [E_cfg, H, F]
+        cfg_values_source = jnp.take_along_axis(arr=cfg_values, indices=cfg_col_indices[..., None], axis=1)
+        print(f'dfa_processor line 129, cfg_values_source: {cfg_values_source.shape}; cfg_coefs: {cfg_coefs.shape}')
         cfg_hidden = jnp.expand_dims(cfg_coefs, axis=-1) * cfg_values_source  # [E_cfg, H, F]
-        print(f'dfa_processor line 104, shape of cfg_hidden is: {cfg_hidden.shape}')
-        cfg_hidden = jax.ops.segment_sum(data=cfg_hidden,
-                                         segment_ids=cfg_row_indices,
-                                         num_segments=nb_nodes_padded)  # [N, H, F]
-        print(f'dfa_processor line 108, shape of cfg_hidden is: {cfg_hidden.shape}')
+        print(f'dfa_processor line 131, shape of cfg_hidden is: {cfg_hidden.shape}')
+
+        @jax.vmap
+        def _segment_sum_batched(data, segment_ids):
+            print(f'dfa_processor line 133, \ndata: {data.shape}; \nsegment_ids: {segment_ids.shape}')
+            return jax.ops.segment_sum(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes_padded)
+
+        # cfg_hidden = jax.ops.segment_sum(data=cfg_hidden,
+        #                                  segment_ids=cfg_row_indices,
+        #                                  num_segments=nb_nodes_padded)  # [N, H, F]
+        cfg_hidden = _segment_sum_batched(data=cfg_hidden,
+                                          segment_ids=jnp.squeeze(cfg_row_indices, -1))
+        print(f'dfa_processor line 143, shape of cfg_hidden is: {cfg_hidden.shape}')
         cfg_hidden = jnp.reshape(cfg_hidden, cfg_hidden.shape[:-2] + (self.out_size,))  # [N, H*F]
-        print(f'dfa_processor line 110, shape of cfg_hidden is: {cfg_hidden.shape}')
+        print(f'dfa_processor line 145, shape of cfg_hidden is: {cfg_hidden.shape}')
 
         if self.residual:
             cfg_hidden += skip(cfg_z)
@@ -134,8 +163,10 @@ class GATSparse(DFAProcessor):
         # NOT SURE att_g
         # att_g = a_g(graph_fts)  # [B, H]
         gkt_logits = (
-                gkt_att_1[gkt_row_indices] +  # + [E_gkt, H]
-                gkt_att_2[gkt_col_indices] +  # + [E_gkt, H]
+                jnp.take_along_axis(arr=gkt_att_1, indices=gkt_row_indices, axis=1)
+                +  # + [E_gkt, H]
+                jnp.take_along_axis(arr=gkt_att_2, indices=gkt_col_indices, axis=1)
+                +  # + [E_gkt, H]
                 gkt_att_e  # + [E_gkt, H]  # + [E, H]
         )  # = [E_gkt, H]
         gkt_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(gkt_logits),
@@ -167,7 +198,9 @@ class GATSparse(DFAProcessor):
         return ret, None  # pytype: disable=bad-return-type  # numpy-scalars
 
 
-def unsorted_segment_softmax(logits, segment_ids, num_segments):
+def unsorted_segment_softmax(logits,  # [B, E, H]
+                             segment_ids,  # [B, E, 1]
+                             num_segments):  # E
     """Returns softmax over each segment.
 
     Args:
@@ -179,6 +212,8 @@ def unsorted_segment_softmax(logits, segment_ids, num_segments):
     Returns:
       Probabilities of the softmax, shape `[dim_0, ...]`.
     """
+    print(
+        f'dfa_processor line 192, \nlogits: {logits.shape}; \nsegment_ids: {segment_ids.shape}; \nnum_segments = {num_segments}')
     segment_max_ = jax.ops.segment_max(logits, segment_ids, num_segments)
     broadcast_segment_max = segment_max_[segment_ids]
     shifted_logits = logits - broadcast_segment_max

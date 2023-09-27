@@ -281,7 +281,7 @@ class SampleLoader:
         trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
         trace_list = []
         for trace_idx in range(trace_len):
-            trace_content_base = np.zeros(shape=(num_pp, num_ip))
+            trace_content_base = np.zeros(shape=(num_pp, num_ip), dtype=int)
             trace_of_this_iteration = result_obj.results_every_iteration[trace_idx].result_map
             # 要从这一个trace里转化出一个matrix来
             assert len(trace_of_this_iteration) == num_pp
@@ -403,6 +403,8 @@ class SampleLoader:
 
             cfg_sparse_array = cfg_sparse
             gen_sparse_array = gen_sparse
+            print(
+                f'dfa_utils line 106, cfg_sparse_array: {cfg_sparse_array.shape}, {cfg_sparse_array.dtype}; gen_sparse_array = {gen_sparse_array.shape}, {gen_sparse_array.dtype}')
             return [cfg_sparse_array, gen_sparse_array]
 
 

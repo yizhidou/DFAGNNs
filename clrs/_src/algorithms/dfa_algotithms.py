@@ -92,6 +92,7 @@ def dfa_reachability(dfa_sample_loader: dfa_utils.SampleLoader,
     trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='dfa_reachability',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse = array_list
+    print(f'dfa_algorithm line 95, cfg_sparse: {cfg_sparse.dtype}; gen_sparse: {gen_sparse.dtype}')
     num_nodes = if_pp.shape[0]
     probes = probing.initialize(spec=dfa_specs.DFASPECS['dfa_reachability'])
     probing.push(probes,

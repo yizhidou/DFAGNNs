@@ -80,6 +80,7 @@ def dfa_finalize(probes: _ProbesDict,
                         cfg_indices_padding = padding_node_idx * np.ones((expected_nb_cfg_edges - nb_cfg_edges, 2),
                                                                          int)
                         cfg_indices_padded = np.concatenate([old_data, cfg_indices_padding])
+                        print(f'dfa_probing line 83, cfg_indices_padded: {cfg_indices_padded.dtype}')
                         probes[stage][loc][name]['data'] = np.concatenate([np.ones(nb_cfg_edges),
                                                                            np.zeros(
                                                                                expected_nb_gkt_edge - nb_cfg_edges)])
@@ -102,6 +103,8 @@ def dfa_finalize(probes: _ProbesDict,
                             assert gkt_indices_padding is not None
                         gkt_indices_padded = np.concatenate([old_data[:, :2],
                                                              gkt_indices_padding])
+                        print(f'dfa_probing line 106, old_data: {old_data.dtype}; gkt_indices_padding: {gkt_indices_padding.dtype}')
+                        print(f'dfa_probing line 107, gkt_indices_padded: {gkt_indices_padded.dtype}; name = {name}')
                         #   [E, 2]
                         # print(f'dfa_probing line 106, gkt_indices_padded: {gkt_indices_padded.shape}')
                         probes[stage][loc][name]['data'] = np.concatenate([old_data[:, -1],
@@ -120,6 +123,8 @@ def dfa_finalize(probes: _ProbesDict,
                                                                              repeated_trace_o],
                                                                             axis=0)
     # [T, E]
+    print(
+        f'dfa_probing line 123, cfg_indices_padded: {cfg_indices_padded.dtype}; gkt_indices_padded: {gkt_indices_padded.dtype}')
     edge_indices_dict = dict(cfg_indices_padded=cfg_indices_padded,
                              gkt_indices_padded=gkt_indices_padded)
     mask_dict = dict(nb_nodes=nb_nodes,
