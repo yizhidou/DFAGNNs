@@ -171,7 +171,7 @@ class DFANet(nets.Net):
 
             # Then scan through the rest.
             scan_fn = functools.partial(
-                self._msg_passing_step,
+                self._dfa_msg_passing_step,
                 first_step=False,
                 **common_args)
 
@@ -273,14 +273,14 @@ class DFANet(nets.Net):
                     1.0 - is_not_done) * mp_state.output_preds
 
         new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
-            hint_preds=hint_preds,
-            output_preds=pred_trace_o,
+            pred_trace_h_i=hint_preds,
+            pred_trace_o=pred_trace_o,
             hiddens=hiddens,
             lstm_state=lstm_state)
         # Save memory by not stacking unnecessary fields
         accum_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
-            hint_preds=hint_preds if return_hints else None,
-            output_preds=pred_trace_o if return_all_outputs else None,
+            pred_trace_h_i=hint_preds if return_hints else None,
+            pred_trace_o=pred_trace_o if return_all_outputs else None,
             hiddens=None, lstm_state=None)
 
         # Complying to jax.scan, the first returned value is the state we carry over
@@ -324,13 +324,13 @@ class DFANet(nets.Net):
             padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
-            nxt_hidden, nxt_edge = jax.vmap(self.processor(
+            nxt_hidden, nxt_edge = self.processor(
                 node_fts=node_fts,
                 gkt_edge_fts=gkt_edge_fts,
                 hidden=hidden,
                 cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
                 gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
-            ))
+            )
 
         if not repred:  # dropout only on training
             nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)

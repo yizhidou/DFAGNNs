@@ -5,6 +5,7 @@ from programl.proto import *
 import programl
 import random
 import jax
+import jax.numpy as jnp
 from clrs._src import dfa_specs, dfa_processors
 
 _Array = np.ndarray
@@ -438,3 +439,8 @@ def parse_params(params_filepath: str):
     params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
     del params_dict['processor']['activation_name']
     return params_dict
+
+def dim_expand_to(x, y):
+  while len(y.shape) > len(x.shape):
+    x = jnp.expand_dims(x, -1)
+  return x

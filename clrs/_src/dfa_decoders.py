@@ -1,7 +1,7 @@
 from typing import Dict, Optional
 from clrs._src import decoders
 from clrs._src import specs
-from clrs._src import yzd_probing
+from clrs._src import dfa_utils
 
 import chex
 import haiku as hk
@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 _chex_Array = chex.Array
-_DataPoint = yzd_probing.DataPoint
+# _DataPoint = yzd_probing.DataPoint
 _Location = specs.Location
 _Spec = specs.Spec
 _Stage = specs.Stage
@@ -27,9 +27,9 @@ def decode_fts(decoders,
     decoded_trace_h = None
     if 'trace_h' in decoders:
         decoded_trace_h = _decode_gkt_edge_fts(decoders=decoders['trace_h'],
-                                           h_t=h_t,
-                                           gkt_edge_fts=gkt_edge_fts,
-                                           gkt_edge_indices=gkt_edge_indices)
+                                               h_t=h_t,
+                                               gkt_edge_fts=gkt_edge_fts,
+                                               gkt_edge_indices=gkt_edge_indices)
     return decoded_trace_h, decoded_trace_o
 
 
@@ -42,8 +42,22 @@ def _decode_gkt_edge_fts(decoders,
     pred_1 = decoders[0](h_t)
     pred_2 = decoders[1](h_t)
     pred_e = decoders[2](gkt_edge_fts)
-    gkt_edges_row_indices = gkt_edge_indices[:, 0]
-    gkt_edges_col_indices = gkt_edge_indices[:, 1]
-    preds = pred_1[gkt_edges_row_indices] + pred_2[gkt_edges_col_indices] + pred_e
+    gkt_edges_row_indices = gkt_edge_indices[..., 0]
+    gkt_edges_col_indices = gkt_edge_indices[..., 1]
+    # preds = pred_1[gkt_edges_row_indices] + pred_2[gkt_edges_col_indices] + pred_e
+    # tmp1 = jnp.take_along_axis(arr=pred_1,
+    #                            indices=dfa_utils.dim_expand_to(gkt_edges_row_indices, pred_1),
+    #                            axis=1)
+    # tmp2 = jnp.take_along_axis(arr=pred_2,
+    #                            indices=dfa_utils.dim_expand_to(gkt_edges_col_indices, pred_2),
+    #                            axis=1)
+    # print(f'dfa_decoder line 48-54, pred_e: {pred_e.shape}; tmp1: {tmp1.shape}; tmp2: {tmp2.shape}')
+    preds = jnp.take_along_axis(arr=pred_1,
+                                indices=dfa_utils.dim_expand_to(gkt_edges_row_indices, pred_1),
+                                axis=1) + \
+            jnp.take_along_axis(arr=pred_2,
+                                indices=dfa_utils.dim_expand_to(gkt_edges_col_indices, pred_2),
+                                axis=1) + \
+            pred_e
     preds = jnp.squeeze(preds, axis=-1)
     return preds
