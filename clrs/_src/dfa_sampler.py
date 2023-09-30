@@ -103,7 +103,13 @@ class DFASampler(samplers.Sampler):
         batched_trace_o = _batch_ioh(outp_dp_list_list)[0]
         batched_trace_h = _batch_ioh(hint_dp_list_list)[0]
         batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x), *edge_indices_dict_list)
-        batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(mask_dict), *mask_dict_list)
+        # print('dfa_sampler line 106')
+        # for idx, tmp_mask_dict in enumerate(mask_dict_list):
+        #     print(f'{idx}: {tmp_mask_dict}')
+        batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(x), *mask_dict_list)
+        # print(f'dfa_sampler line 110')
+        # print(f'batched_mask_dict: {type(batched_mask_dict)}')
+        # print(batched_mask_dict)
         return batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
 
     def next(self, batch_size: Optional[int] = None) -> Feedback:

@@ -124,7 +124,7 @@ class DFANet(nets.Net):
             input_dp_list = features.input_dp_list
             trace_h = features.trace_h
             padded_edge_indices_dict = features.padded_edge_indices_dict
-            mask_dict = features.mask_dict
+            hint_len = features.mask_dict['hint_len']
 
             batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
 
@@ -151,7 +151,7 @@ class DFANet(nets.Net):
             common_args = dict(
                 input_dp_list=input_dp_list,
                 trace_h=trace_h,
-                mask_dict=mask_dict,
+                hint_len=hint_len,
                 batch_size=batch_size,
                 nb_nodes_padded=nb_nodes_padded,
                 nb_gkt_edges_padded=nb_gkt_edges_padded,
@@ -208,7 +208,7 @@ class DFANet(nets.Net):
                               i: int,
                               input_dp_list: _Trajectory,
                               trace_h: probing.DataPoint,
-                              mask_dict: Dict[str, _chex_Array],
+                              hint_len: _chex_Array,
                               batch_size: int,
                               nb_nodes_padded: int,
                               nb_gkt_edges_padded: int,
@@ -267,10 +267,12 @@ class DFANet(nets.Net):
             pred_trace_o = pred_trace_o_cand
         else:
             # output_preds = {}
-            is_not_done = nets._is_not_done_broadcast(mask_dict['hint_len'], i,
+            # tmp = mask_dict['hint_len']
+            print(f'dfa_nets line 270-271, i = {i}; hint_len: {type(hint_len)}\nhint_len = {hint_len}')
+            is_not_done = nets._is_not_done_broadcast(hint_len, i,
                                                       pred_trace_o_cand)
             pred_trace_o = is_not_done * pred_trace_o_cand + (
-                    1.0 - is_not_done) * mp_state.output_preds
+                    1.0 - is_not_done) * mp_state.pred_trace_o
 
         new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
             pred_trace_h_i=hint_preds,
