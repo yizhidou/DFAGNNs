@@ -77,7 +77,7 @@ class DFANet(nets.Net):
 
         Args:
           features_list: A list of _Features objects, each with the inputs, hints
-            and lengths for a batch o data corresponding to one algorithm.
+            and lengths for a batch of data corresponding to one algorithm.
             The list should have either length 1, at train/evaluation time,
             or length equal to the number of algorithms this Net is meant to
             process, at initialization.
@@ -85,7 +85,7 @@ class DFANet(nets.Net):
             True in validation/test mode, when we have to use our own
             hint predictions.
           algorithm_index: Which algorithm is being processed. It can be -1 at
-            initialisation (either because we are initialising the parameters of
+            initialization (either because we are initialising the parameters of
             the module or because we are intialising the message-passing state),
             meaning that all algorithms should be processed, in which case
             `features_list` should have length equal to the number of specs of
@@ -128,15 +128,16 @@ class DFANet(nets.Net):
 
             batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
 
-            # YZDTODO 不知道为什么要减一 但是先不管了
+            # YZDTODO 这么看不知道trace_i是不是没有存在的必要了？
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
             hiddens = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-
+            print(f'dfa_nets line 134, nb_mp_steps = {nb_mp_steps}')
             if self.use_lstm:
                 lstm_state = lstm_init(batch_size * nb_nodes_padded)
                 lstm_state = jax.tree_util.tree_map(
                     lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
                     lstm_state)
+            #     YZDTODO 这个不太理解，但是lstm_state是个...function?
             else:
                 lstm_state = None
 
@@ -168,7 +169,8 @@ class DFANet(nets.Net):
                 first_step=True,
                 **common_args
             )
-
+            print(  # [2(B), 750]; [2(B), 750]
+                f'dfa_nets line 172, mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}\nlean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
             # Then scan through the rest.
             scan_fn = functools.partial(
                 self._dfa_msg_passing_step,
@@ -180,7 +182,8 @@ class DFANet(nets.Net):
                 mp_state,
                 jnp.arange(nb_mp_steps - 1) + 1,
                 length=nb_mp_steps - 1)
-
+        print(  # [2, 750]; [3(T), 2, 750]
+            f'dfa_nets line 185,output_mp_state.pred_trace_o: {output_mp_state.pred_trace_o.shape}; accum_mp_state.pred_trace_o:{accum_mp_state.pred_trace_o.shape}')
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
@@ -188,19 +191,23 @@ class DFANet(nets.Net):
         accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
-
+        print(
+            f'dfa_nets line 194, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
         def invert(d):
             """Dict of lists -> list of dicts."""
             if d:
                 return [dict(zip(d, i)) for i in zip(*d.values())]
 
         if return_all_outputs:
-            output_preds = {k: jnp.stack(v)
-                            for k, v in accum_mp_state.output_preds.items()}
+            # output_preds = {k: jnp.stack(v)
+            #                 for k, v in accum_mp_state.output_preds.items()}
+            output_preds = jnp.stack(accum_mp_state.pred_trace_o)
+            print(f'dfa_nets line 205, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+        #     YZDTODO 所以这个stack有啥用呢？？哦哦...可能是把所有的hints给stack到一起...
         else:
-            output_preds = output_mp_state.output_preds
-        hint_preds = invert(accum_mp_state.hint_preds)
-
+            output_preds = output_mp_state.pred_trace_o
+        # hint_preds = invert(accum_mp_state.hint_preds)
+        hint_preds = accum_mp_state.pred_trace_h_i
         return output_preds, hint_preds
 
     def _dfa_msg_passing_step(self,
@@ -262,7 +269,8 @@ class DFANet(nets.Net):
             encs=encs,
             decs=decs,
             repred=repred)
-
+        print(
+            f'dfa_nets line 272 hiddens: {hiddens.shape}; pred_trace_o_cand: {pred_trace_o_cand.shape}; hint_preds: {hint_preds.shape}, lstm_state: {type(lstm_state)}')
         if first_step:
             pred_trace_o = pred_trace_o_cand
         else:
@@ -322,7 +330,7 @@ class DFANet(nets.Net):
             node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
 
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        print('dfa_nets line 323, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(
+        print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(
             padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):

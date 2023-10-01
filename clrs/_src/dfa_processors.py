@@ -218,7 +218,7 @@ class GATSparse(DFAProcessor):
         if self.use_ln:
             ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
             ret = ln(ret)
-
+        print(f'dfa_processor line 221, ret: {ret.shape}')  # [B, N, hidden_dim] [2, 150, 16]
         return ret, None  # pytype: disable=bad-return-type  # numpy-scalars
 
 
