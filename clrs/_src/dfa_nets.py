@@ -171,6 +171,8 @@ class DFANet(nets.Net):
             )
             print(  # [2(B), 750]; [2(B), 750]
                 f'dfa_nets line 172, mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}\nlean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
+            print(  # [2(B), 750]; [2(B), 750]
+                f'dfa_nets line 175, mp_state.pred_trace_h_i:{mp_state.pred_trace_h_i.shape}\nlean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
             # Then scan through the rest.
             scan_fn = functools.partial(
                 self._dfa_msg_passing_step,
@@ -183,7 +185,9 @@ class DFANet(nets.Net):
                 jnp.arange(nb_mp_steps - 1) + 1,
                 length=nb_mp_steps - 1)
         print(  # [2, 750]; [3(T), 2, 750]
-            f'dfa_nets line 185,output_mp_state.pred_trace_o: {output_mp_state.pred_trace_o.shape}; accum_mp_state.pred_trace_o:{accum_mp_state.pred_trace_o.shape}')
+            f'dfa_nets line 188,output_mp_state.pred_trace_o: {output_mp_state.pred_trace_o.shape}; accum_mp_state.pred_trace_o:{accum_mp_state.pred_trace_o.shape}')
+        print(  # [2, 750]; [3(T), 2, 750]
+            f'dfa_nets line 190,output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}; accum_mp_state.pred_trace_h_i:{accum_mp_state.pred_trace_h_i.shape}')
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
@@ -192,7 +196,9 @@ class DFANet(nets.Net):
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
         print(
-            f'dfa_nets line 194, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+            f'dfa_nets line 199, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+        print(f'accumu_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
+
         def invert(d):
             """Dict of lists -> list of dicts."""
             if d:
@@ -201,14 +207,14 @@ class DFANet(nets.Net):
         if return_all_outputs:
             # output_preds = {k: jnp.stack(v)
             #                 for k, v in accum_mp_state.output_preds.items()}
-            output_preds = jnp.stack(accum_mp_state.pred_trace_o)
+            pred_trace_o = jnp.stack(accum_mp_state.pred_trace_o)
             print(f'dfa_nets line 205, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
         #     YZDTODO 所以这个stack有啥用呢？？哦哦...可能是把所有的hints给stack到一起...
         else:
-            output_preds = output_mp_state.pred_trace_o
+            pred_trace_o = output_mp_state.pred_trace_o
         # hint_preds = invert(accum_mp_state.hint_preds)
-        hint_preds = accum_mp_state.pred_trace_h_i
-        return output_preds, hint_preds
+        pred_trace_h_i = accum_mp_state.pred_trace_h_i
+        return pred_trace_o, pred_trace_h_i
 
     def _dfa_msg_passing_step(self,
                               mp_state: _MessagePassingScanState,
