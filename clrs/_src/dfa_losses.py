@@ -28,7 +28,7 @@ def trace_o_loss(truth: _DataPoint,
 
 def trace_h_loss(
         truth: _DataPoint,
-        preds: List[_chex_Array],
+        preds: _chex_Array,
         lengths: _chex_Array,
         verbose: bool = False,
 ):
@@ -39,7 +39,7 @@ def trace_h_loss(
 
     loss, mask = _trace_h_loss(
         truth_data=truth.data[1:],
-        pred=jnp.stack(preds),
+        pred=preds,
     )
     mask *= losses._is_not_done_broadcast(lengths, jnp.arange(length)[:, None], loss)
     loss = jnp.sum(loss * mask) / jnp.maximum(jnp.sum(mask), losses.EPS)

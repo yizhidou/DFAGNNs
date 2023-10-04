@@ -23,13 +23,14 @@ from typing import Dict, List, Optional, Tuple, Union
 import chex
 
 from clrs._src import decoders
-from clrs._src import losses
+from clrs._src import losses, dfa_losses
 from clrs._src import model
 from clrs._src import nets
 from clrs._src import probing
 from clrs._src import processors
 from clrs._src import dfa_sampler
 from clrs._src import specs
+from clrs._src import baselines
 
 import haiku as hk
 import jax
@@ -52,88 +53,6 @@ _OutputClass = specs.OutputClass
 
 
 # pytype: disable=signature-mismatch
-
-
-def _maybe_pick_first_pmapped(tree):
-    if jax.local_device_count() == 1:
-        return tree
-    return jax.tree_util.tree_map(lambda x: x[0], tree)
-
-
-@jax.jit
-def _restack_from_pmap(tree):
-    """Stack the results of a pmapped computation across the first two axes."""
-    restack_array = lambda x: jnp.reshape(x, (-1,) + x.shape[2:])
-    return jax.tree_util.tree_map(restack_array, tree)
-
-
-def _maybe_restack_from_pmap(tree):
-    if jax.local_device_count() == 1:
-        return tree
-    return _restack_from_pmap(tree)
-
-
-@functools.partial(jax.jit, static_argnums=[1, 2])
-def _pmap_reshape(x, n_devices, split_axis=0):
-    """Splits a pytree over n_devices on axis split_axis for pmapping."""
-
-    def _reshape(arr):
-        new_shape = (arr.shape[:split_axis] +
-                     (n_devices, arr.shape[split_axis] // n_devices) +
-                     arr.shape[split_axis + 1:])
-        return jnp.moveaxis(jnp.reshape(arr, new_shape), split_axis, 0)
-
-    return jax.tree_util.tree_map(_reshape, x)
-
-
-def _maybe_pmap_reshape(x, split_axis=0):
-    n_devices = jax.local_device_count()
-    if n_devices == 1:
-        return x
-    return _pmap_reshape(x, n_devices, split_axis)
-
-
-@functools.partial(jax.jit, static_argnums=1)
-def _pmap_data(data: Union[_Feedback, _Features], n_devices: int):
-    """Replicate/split feedback or features for pmapping."""
-    if isinstance(data, _Feedback):
-        features = data.features
-    else:
-        features = data
-    pmap_data = features._replace(
-        inputs=_pmap_reshape(features.inputs, n_devices),
-        hints=_pmap_reshape(features.hints, n_devices, split_axis=1),
-        lengths=_pmap_reshape(features.lengths, n_devices),
-    )
-    if isinstance(data, _Feedback):
-        pmap_data = data._replace(
-            features=pmap_data,
-            outputs=_pmap_reshape(data.outputs, n_devices)
-        )
-    return pmap_data
-
-
-def _maybe_pmap_data(data: Union[_Feedback, _Features]):
-    n_devices = jax.local_device_count()
-    if n_devices == 1:
-        return data
-    return _pmap_data(data, n_devices)
-
-
-def _maybe_put_replicated(tree):
-    if jax.local_device_count() == 1:
-        return jax.device_put(tree)
-    else:
-        return jax.device_put_replicated(tree, jax.local_devices())
-
-
-def _maybe_pmap_rng_key(rng_key: _Array):
-    n_devices = jax.local_device_count()
-    if n_devices == 1:
-        return rng_key
-    pmap_rng_keys = jax.random.split(rng_key, n_devices)
-    return jax.device_put_sharded(list(pmap_rng_keys), jax.local_devices())
-
 
 class BaselineModel(model.Model):
     """Model implementation with selectable message passing algorithm."""
@@ -232,12 +151,10 @@ class BaselineModel(model.Model):
             dummy_trajectory = [dummy_trajectory]
         for traj in dummy_trajectory:
             nb_dims = {}
-            for inp in traj.features.inputs:
+            for inp in traj.features.input_dp_list:
                 nb_dims[inp.name] = inp.data.shape[-1]
-            for hint in traj.features.hints:
-                nb_dims[hint.name] = hint.data.shape[-1]
-            for outp in traj.outputs:
-                nb_dims[outp.name] = outp.data.shape[-1]
+            nb_dims[traj.features.trace_h.name] = traj.features.trace_h.data.shape[-1]
+            nb_dims[traj.trace_o.name] = traj.trace_o.data.shape[-1]
             self.nb_dims.append(nb_dims)
 
         self._create_net_fns(hidden_dim, encode_hints, processor_factory, use_lstm,
@@ -294,21 +211,21 @@ class BaselineModel(model.Model):
     def params(self):
         if self._device_params is None:
             return None
-        return jax.device_get(_maybe_pick_first_pmapped(self._device_params))
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_params))
 
     @params.setter
     def params(self, params):
-        self._device_params = _maybe_put_replicated(params)
+        self._device_params = baselines._maybe_put_replicated(params)
 
     @property
     def opt_state(self):
         if self._device_opt_state is None:
             return None
-        return jax.device_get(_maybe_pick_first_pmapped(self._device_opt_state))
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_opt_state))
 
     @opt_state.setter
     def opt_state(self, opt_state):
-        self._device_opt_state = _maybe_put_replicated(opt_state)
+        self._device_opt_state = baselines._maybe_put_replicated(opt_state)
 
     def _compute_grad(self, params, rng_key, feedback, algorithm_index):
         lss, grads = jax.value_and_grad(self._loss)(
@@ -354,12 +271,12 @@ class BaselineModel(model.Model):
         assert algorithm_index >= 0
 
         # Calculate gradients.
-        rng_keys = _maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
-        feedback = _maybe_pmap_data(feedback)
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
         loss, grads = self.jitted_grad(
             self._device_params, rng_keys, feedback, algorithm_index)
-        loss = _maybe_pick_first_pmapped(loss)
-        grads = _maybe_pick_first_pmapped(grads)
+        loss = baselines._maybe_pick_first_pmapped(loss)
+        grads = baselines._maybe_pick_first_pmapped(grads)
 
         return loss, grads
 
@@ -370,12 +287,12 @@ class BaselineModel(model.Model):
             assert len(self._spec) == 1
             algorithm_index = 0
         # Calculate and apply gradients.
-        rng_keys = _maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
-        feedback = _maybe_pmap_data(feedback)
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
         loss, self._device_params, self._device_opt_state = self.jitted_feedback(
             self._device_params, rng_keys, feedback,
             self._device_opt_state, algorithm_index)
-        loss = _maybe_pick_first_pmapped(loss)
+        loss = baselines._maybe_pick_first_pmapped(loss)
         return loss
 
     def predict(self, rng_key: hk.PRNGSequence, features: _Features,
@@ -387,9 +304,9 @@ class BaselineModel(model.Model):
             assert len(self._spec) == 1
             algorithm_index = 0
 
-        rng_keys = _maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
-        features = _maybe_pmap_data(features)
-        return _maybe_restack_from_pmap(
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = baselines._maybe_pmap_data(features)
+        return baselines._maybe_restack_from_pmap(
             self.jitted_predict(
                 self._device_params, rng_keys, features,
                 algorithm_index,
@@ -406,37 +323,21 @@ class BaselineModel(model.Model):
             return_hints=True,
             return_all_outputs=False)
 
-        nb_nodes = _nb_nodes(feedback, is_chunked=False)
+        # nb_nodes = _nb_nodes(feedback, is_chunked=False)
         hint_len = feedback.features.mask_dict['hint_len']
         total_loss = 0.0
 
         # Calculate output loss.
         truth_trace_o = feedback.trace_o
-        total_loss += losses.output_loss(truth=truth_trace_o,
-                                         pred=pred_trace_o,
-                                         nb_nodes=nb_nodes)
-        # for truth in feedback.outputs:
-        #     total_loss += losses.output_loss(
-        #         truth=truth,
-        #         pred=output_preds[truth.name],
-        #         nb_nodes=nb_nodes,
-        #     )
+        total_loss += dfa_losses.trace_o_loss(truth=truth_trace_o,
+                                              pred=pred_trace_o)
 
         # Optionally accumulate hint losses.
         if self.decode_hints:
             truth_trace_h = feedback.features.trace_h
-            total_loss += losses.hint_loss(truth=truth_trace_h,
-                                           preds=None,
-                                           lengths=hint_len,
-                                           nb_nodes=nb_nodes)
-            # for truth in feedback.features.hints:
-            #     total_loss += losses.hint_loss(
-            #         truth=truth,
-            #         preds=[x[truth.name] for x in hint_preds],
-            #         lengths=lengths,
-            #         nb_nodes=nb_nodes,
-            #     )
-
+            total_loss += dfa_losses.trace_h_loss(truth=truth_trace_h,
+                                                  preds=pred_trace_h_i,
+                                                  lengths=hint_len)
         return total_loss
 
     def _update_params(self, params, grads, opt_state, algorithm_index):
@@ -455,7 +356,7 @@ class BaselineModel(model.Model):
         return new_params, opt_state
 
     def update_model_params_accum(self, grads) -> None:
-        grads = _maybe_put_replicated(grads)
+        grads = baselines._maybe_put_replicated(grads)
         self._device_params, self._device_opt_state = self.jitted_accum_opt_update(
             self._device_params, grads, self._device_opt_state, self.opt,
             self._freeze_processor)
