@@ -5,6 +5,7 @@ from clrs._src import dfa_sampler
 from clrs._src import dfa_utils
 from clrs._src import dfa_nets
 from clrs._src import dfa_processors
+from clrs._src import dfa_baselines
 
 
 def FeedbackListGenerator(dfa_sampler: dfa_sampler.DFASampler,
@@ -48,31 +49,43 @@ if __name__ == '__main__':
 
     feedback_generator = FeedbackListGenerator(dfa_sampler=test_sampler,
                                                batch_size=test_params_dict['dfa_sampler']['batch_size'])
-    feedback_list = [next(feedback_generator) for _ in range(2)]
+    feedback_list = [next(feedback_generator) for _ in range(5)]
 
     test_processor_factory = dfa_processors.get_dfa_processor_factory(**test_params_dict['processor'])
 
+    test_dfa_baseline = dfa_baselines.DFABaselineModel(dummy_trajectory=[feedback_list[0]],
+                                                       processor_factory=test_processor_factory,
+                                                       **test_params_dict['dfa_net'],
+                                                       **test_params_dict['baseline_model'])
+    test_dfa_baseline.init(features=[feedback_list[1].features],
+                           seed=6)
+    loss1 = test_dfa_baseline.feedback(rng_key=jax.random.PRNGKey(42),
+                                       feedback=feedback_list[2])
+    loss2 = test_dfa_baseline.feedback(rng_key=jax.random.PRNGKey(42),
+                                       feedback=feedback_list[3])
 
-    def _use_net(features_list,
-                 repred,
-                 algorithm_index,
-                 return_hints,
-                 return_all_outputs):
-        return dfa_nets.DFANet(processor_factory=test_processor_factory,
-                               **test_params_dict['dfa_net'])(features_list=features_list,
-                                                              repred=repred,
-                                                              algorithm_index=algorithm_index,
-                                                              return_hints=return_hints,
-                                                              return_all_outputs=return_all_outputs)
+    print(f'the final loss1 = {loss1}; loss2 = {loss2}')
 
-
-    net_fn = hk.transform(_use_net)
-
-    print(f'the type of transformed_net is: {type(net_fn)}')
-    feature_list = [feedback_list[0].features]
-    params = net_fn.init(rng=jax.random.PRNGKey(42),
-                         features_list=feature_list,
-                         repred=False,
-                         algorithm_index=-1,
-                         return_hints=True,
-                         return_all_outputs=True)
+    # def _use_net(features_list,
+    #              repred,
+    #              algorithm_index,
+    #              return_hints,
+    #              return_all_outputs):
+    #     return dfa_nets.DFANet(processor_factory=test_processor_factory,
+    #                            **test_params_dict['dfa_net'])(features_list=features_list,
+    #                                                           repred=repred,
+    #                                                           algorithm_index=algorithm_index,
+    #                                                           return_hints=return_hints,
+    #                                                           return_all_outputs=return_all_outputs)
+    #
+    #
+    # net_fn = hk.transform(_use_net)
+    #
+    # print(f'the type of transformed_net is: {type(net_fn)}')
+    # feature_list = [feedback_list[0].features]
+    # params = net_fn.init(rng=jax.random.PRNGKey(42),
+    #                      features_list=feature_list,
+    #                      repred=False,
+    #                      algorithm_index=-1,
+    #                      return_hints=True,
+    #                      return_all_outputs=True)

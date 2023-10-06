@@ -25,9 +25,9 @@ import chex
 from clrs._src import decoders
 from clrs._src import losses, dfa_losses
 from clrs._src import model
-from clrs._src import nets
+from clrs._src import dfa_nets
 from clrs._src import probing
-from clrs._src import processors
+from clrs._src import processors, dfa_processors
 from clrs._src import dfa_sampler
 from clrs._src import specs
 from clrs._src import baselines
@@ -54,7 +54,7 @@ _OutputClass = specs.OutputClass
 
 # pytype: disable=signature-mismatch
 
-class BaselineModel(model.Model):
+class DFABaselineModel(model.Model):
     """Model implementation with selectable message passing algorithm."""
 
     def __init__(
@@ -67,15 +67,15 @@ class BaselineModel(model.Model):
             decode_hints: bool = True,
             encoder_init: str = 'default',
             use_lstm: bool = False,
-            learning_rate: float = 0.005,
-            grad_clip_max_norm: float = 0.0,
-            checkpoint_path: str = '/tmp/clrs3',
-            freeze_processor: bool = False,
             dropout_prob: float = 0.0,
             hint_teacher_forcing: float = 0.0,
             hint_repred_mode: str = 'soft',
-            name: str = 'base_model',
+            name: str = 'dfa_base_model',
             nb_msg_passing_steps: int = 1,
+            learning_rate: float = 0.005,  #
+            grad_clip_max_norm: float = 0.0,  #
+            checkpoint_path: str = '/tmp/clrs3',  #
+            freeze_processor: bool = False,  #
     ):
         """Constructor for BaselineModel.
 
@@ -124,7 +124,7 @@ class BaselineModel(model.Model):
         Raises:
           ValueError: if `encode_hints=True` and `decode_hints=False`.
         """
-        super(BaselineModel, self).__init__(spec=spec)
+        super(DFABaselineModel, self).__init__(spec=spec)
 
         if encode_hints and not decode_hints:
             raise ValueError('`encode_hints=True`, `decode_hints=False` is invalid.')
@@ -151,6 +151,8 @@ class BaselineModel(model.Model):
             dummy_trajectory = [dummy_trajectory]
         for traj in dummy_trajectory:
             nb_dims = {}
+            # assert (traj, _Feedback)
+            # print(f'dfa_baseline line 155, to validate the assertion, traj: {type(traj)}')
             for inp in traj.features.input_dp_list:
                 nb_dims[inp.name] = inp.data.shape[-1]
             nb_dims[traj.features.trace_h.name] = traj.features.trace_h.data.shape[-1]
@@ -164,15 +166,35 @@ class BaselineModel(model.Model):
         self._device_opt_state = None
         self.opt_state_skeleton = None
 
-    def _create_net_fns(self, hidden_dim, encode_hints, processor_factory,
-                        use_lstm, encoder_init, dropout_prob,
-                        hint_teacher_forcing, hint_repred_mode):
-        def _use_net(*args, **kwargs):
-            return nets.Net(self._spec, hidden_dim, encode_hints, self.decode_hints,
-                            processor_factory, use_lstm, encoder_init,
-                            dropout_prob, hint_teacher_forcing,
-                            hint_repred_mode,
-                            self.nb_dims, self.nb_msg_passing_steps)(*args, **kwargs)
+    def _create_net_fns(self, hidden_dim: int,
+                        encode_hints: bool,
+                        processor_factory: dfa_processors.DFAProcessorFactory,
+                        use_lstm: bool,
+                        encoder_init: str,
+                        dropout_prob: float,
+                        hint_teacher_forcing: float,
+                        hint_repred_mode: str):
+        def _use_net(features_list: List[_Features],
+                     repred: bool,
+                     algorithm_index: int,
+                     return_hints: bool,
+                     return_all_outputs: bool):
+            return dfa_nets.DFANet(spec=self._spec,
+                                   hidden_dim=hidden_dim,
+                                   encode_hints=encode_hints,
+                                   decode_hints=self.decode_hints,
+                                   processor_factory=processor_factory,
+                                   use_lstm=use_lstm,
+                                   encoder_init=encoder_init,
+                                   dropout_prob=dropout_prob,
+                                   hint_teacher_forcing=hint_teacher_forcing,
+                                   hint_repred_mode=hint_repred_mode,
+                                   nb_dims=self.nb_dims,
+                                   nb_msg_passing_steps=self.nb_msg_passing_steps)(features_list,
+                                                                                   repred,
+                                                                                   algorithm_index,
+                                                                                   return_hints,
+                                                                                   return_all_outputs)
 
         self.net_fn = hk.transform(_use_net)
         pmap_args = dict(axis_name='batch', devices=jax.local_devices())
@@ -190,15 +212,16 @@ class BaselineModel(model.Model):
         extra_args[static_arg] = [3, 4, 5]
         self.jitted_predict = func(self._predict, **extra_args)
         extra_args[static_arg] = [3, 4]
-        self.jitted_accum_opt_update = func(accum_opt_update, donate_argnums=[0, 2],
+        self.jitted_accum_opt_update = func(baselines.accum_opt_update, donate_argnums=[0, 2],
                                             **extra_args)
 
     def init(self, features: Union[_Features, List[_Features]], seed: _Seed):
         if not isinstance(features, list):
             assert len(self._spec) == 1
             features = [features]
-        self.params = self.net_fn.init(jax.random.PRNGKey(seed), features, True,
-                                       # pytype: disable=wrong-arg-types  # jax-ndarray
+        self.params = self.net_fn.init(rng=jax.random.PRNGKey(seed),
+                                       features_list=features,
+                                       repred=True,  # pytype: disable=wrong-arg-types  # jax-ndarray
                                        algorithm_index=-1,
                                        return_hints=False,
                                        return_all_outputs=False)
@@ -341,11 +364,11 @@ class BaselineModel(model.Model):
         return total_loss
 
     def _update_params(self, params, grads, opt_state, algorithm_index):
-        updates, opt_state = filter_null_grads(
+        updates, opt_state = baselines.filter_null_grads(
             grads, self.opt, opt_state, self.opt_state_skeleton, algorithm_index)
         if self._freeze_processor:
-            params_subset = _filter_out_processor(params)
-            updates_subset = _filter_out_processor(updates)
+            params_subset = baselines._filter_out_processor(params)
+            updates_subset = baselines._filter_out_processor(updates)
             assert len(params) > len(params_subset)
             assert params_subset
             new_params = optax.apply_updates(params_subset, updates_subset)
@@ -365,21 +388,25 @@ class BaselineModel(model.Model):
         """Gets verbose loss information."""
         hint_preds = extra_info
 
-        nb_nodes = _nb_nodes(feedback, is_chunked=False)
+        # nb_nodes = _nb_nodes(feedback, is_chunked=False)
         lengths = feedback.features.lengths
         losses_ = {}
 
         # Optionally accumulate hint losses.
         if self.decode_hints:
-            for truth in feedback.features.hints:
-                losses_.update(
-                    losses.hint_loss(
-                        truth=truth,
-                        preds=[x[truth.name] for x in hint_preds],
-                        lengths=lengths,
-                        nb_nodes=nb_nodes,
-                        verbose=True,
-                    ))
+            losses_.update(dfa_losses.trace_h_loss(truth=feedback.features.trace_h,
+                                                   preds=hint_preds,
+                                                   lengths=lengths,
+                                                   verbose=True))
+            # for truth in feedback.features.hints:
+            #     losses_.update(
+            #         losses.hint_loss(
+            #             truth=truth,
+            #             preds=[x[truth.name] for x in hint_preds],
+            #             lengths=lengths,
+            #             nb_nodes=nb_nodes,
+            #             verbose=True,
+            #         ))
 
         return losses_
 
@@ -389,7 +416,7 @@ class BaselineModel(model.Model):
         with open(path, 'rb') as f:
             restored_state = pickle.load(f)
             if only_load_processor:
-                restored_params = _filter_in_processor(restored_state['params'])
+                restored_params = baselines._filter_in_processor(restored_state['params'])
             else:
                 restored_params = restored_state['params']
             self.params = hk.data_structures.merge(self.params, restored_params)
@@ -402,127 +429,3 @@ class BaselineModel(model.Model):
         path = os.path.join(self.checkpoint_path, file_name)
         with open(path, 'wb') as f:
             pickle.dump(to_save, f)
-
-
-def _nb_nodes(feedback: _Feedback, is_chunked) -> int:
-    for inp in feedback.features.inputs:
-        if inp.location in [_Location.NODE, _Location.EDGE]:
-            if is_chunked:
-                return inp.data.shape[2]  # inputs are time x batch x nodes x ...
-            else:
-                print(f'dfa_baselines line 507, nb_nodes = {inp.data.shape[1]}')
-                return inp.data.shape[1]  # inputs are batch x nodes x ...
-    assert False
-
-
-def _param_in_processor(module_name):
-    return processors.PROCESSOR_TAG in module_name
-
-
-def _filter_out_processor(params: hk.Params) -> hk.Params:
-    return hk.data_structures.filter(
-        lambda module_name, n, v: not _param_in_processor(module_name), params)
-
-
-def _filter_in_processor(params: hk.Params) -> hk.Params:
-    return hk.data_structures.filter(
-        lambda module_name, n, v: _param_in_processor(module_name), params)
-
-
-def _is_not_done_broadcast(lengths, i, tensor):
-    is_not_done = (lengths > i + 1) * 1.0
-    while len(is_not_done.shape) < len(tensor.shape):
-        is_not_done = jnp.expand_dims(is_not_done, -1)
-    return is_not_done
-
-
-def accum_opt_update(params, grads, opt_state, opt, freeze_processor):
-    """Update params from gradients collected from several algorithms."""
-    # Average the gradients over all algos
-    grads = jax.tree_util.tree_map(
-        lambda *x: sum(x) / (sum([jnp.any(k) for k in x]) + 1e-12), *grads)
-    updates, opt_state = opt.update(grads, opt_state)
-    if freeze_processor:
-        params_subset = _filter_out_processor(params)
-        assert len(params) > len(params_subset)
-        assert params_subset
-        updates_subset = _filter_out_processor(updates)
-        new_params = optax.apply_updates(params_subset, updates_subset)
-        new_params = hk.data_structures.merge(params, new_params)
-    else:
-        new_params = optax.apply_updates(params, updates)
-
-    return new_params, opt_state
-
-
-@functools.partial(jax.jit, static_argnames=['opt'])
-def opt_update(opt, flat_grads, flat_opt_state):
-    return opt.update(flat_grads, flat_opt_state)
-
-
-def filter_null_grads(grads, opt, opt_state, opt_state_skeleton, algo_idx):
-    """Compute updates ignoring params that have no gradients.
-
-    This prevents untrained params (e.g., encoders/decoders for algorithms
-    that are not being trained) to accumulate, e.g., momentum from spurious
-    zero gradients.
-
-    Note: this works as intended for "per-parameter" optimizer state, such as
-      momentum. However, when the optimizer has some global state (such as the
-      step counts in Adam), the global state will be updated every time,
-      affecting also future updates of parameters that had null gradients in the
-      current step.
-
-    Args:
-      grads: Gradients for all parameters.
-      opt: Optax optimizer.
-      opt_state: Optimizer state.
-      opt_state_skeleton: A "skeleton" of optimizer state that has been
-        initialized with scalar parameters. This serves to traverse each parameter
-        of the otpimizer state during the opt state update.
-      algo_idx: Index of algorithm, to filter out unused encoders/decoders.
-        If None, no filtering happens.
-    Returns:
-      Updates and new optimizer state, where the parameters with null gradient
-        have not been taken into account.
-    """
-
-    def _keep_in_algo(k, v):
-        """Ignore params of encoders/decoders irrelevant for this algo."""
-        # Note: in shared pointer decoder modes, we should exclude shared params
-        #       for algos that do not have pointer outputs.
-        if ((processors.PROCESSOR_TAG in k) or
-                (f'algo_{algo_idx}_' in k)):
-            return v
-        return jax.tree_util.tree_map(lambda x: None, v)
-
-    if algo_idx is None:
-        masked_grads = grads
-    else:
-        masked_grads = {k: _keep_in_algo(k, v) for k, v in grads.items()}
-    flat_grads, treedef = jax.tree_util.tree_flatten(masked_grads)
-    flat_opt_state = jax.tree_util.tree_map(
-        lambda _, x: x  # pylint:disable=g-long-lambda
-        if isinstance(x, (np.ndarray, jax.Array))
-        else treedef.flatten_up_to(x),
-        opt_state_skeleton,
-        opt_state,
-    )
-
-    # Compute updates only for the params with gradient.
-    flat_updates, flat_opt_state = opt_update(opt, flat_grads, flat_opt_state)
-
-    def unflatten(flat, original):
-        """Restore tree structure, filling missing (None) leaves with original."""
-        if isinstance(flat, (np.ndarray, jax.Array)):
-            return flat
-        return jax.tree_util.tree_map(lambda x, y: x if y is None else y, original,
-                                      treedef.unflatten(flat))
-
-    # Restore the state and updates tree structure.
-    new_opt_state = jax.tree_util.tree_map(lambda _, x, y: unflatten(x, y),
-                                           opt_state_skeleton, flat_opt_state,
-                                           opt_state)
-    updates = unflatten(flat_updates,
-                        jax.tree_util.tree_map(lambda x: 0., grads))
-    return updates, new_opt_state
