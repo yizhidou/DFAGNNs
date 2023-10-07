@@ -60,7 +60,7 @@ class DFABaselineModel(model.Model):
     def __init__(
             self,
             spec: Union[_Spec, List[_Spec]],
-            dummy_trajectory: Union[List[_Feedback], _Feedback],
+            # dummy_trajectory: Union[List[_Feedback], _Feedback],
             processor_factory: processors.ProcessorFactory,
             hidden_dim: int = 32,
             encode_hints: bool = False,
@@ -145,19 +145,19 @@ class DFABaselineModel(model.Model):
 
         self.nb_msg_passing_steps = nb_msg_passing_steps
 
-        self.nb_dims = []
-        if isinstance(dummy_trajectory, _Feedback):
-            assert len(self._spec) == 1
-            dummy_trajectory = [dummy_trajectory]
-        for traj in dummy_trajectory:
-            nb_dims = {}
-            # assert (traj, _Feedback)
-            # print(f'dfa_baseline line 155, to validate the assertion, traj: {type(traj)}')
-            for inp in traj.features.input_dp_list:
-                nb_dims[inp.name] = inp.data.shape[-1]
-            nb_dims[traj.features.trace_h.name] = traj.features.trace_h.data.shape[-1]
-            nb_dims[traj.trace_o.name] = traj.trace_o.data.shape[-1]
-            self.nb_dims.append(nb_dims)
+        # self.nb_dims = []
+        # if isinstance(dummy_trajectory, _Feedback):
+        #     assert len(self._spec) == 1
+        #     dummy_trajectory = [dummy_trajectory]
+        # for traj in dummy_trajectory:
+        #     nb_dims = {}
+        #     # assert (traj, _Feedback)
+        #     # print(f'dfa_baseline line 155, to validate the assertion, traj: {type(traj)}')
+        #     for inp in traj.features.input_dp_list:
+        #         nb_dims[inp.name] = inp.data.shape[-1]
+        #     nb_dims[traj.features.trace_h.name] = traj.features.trace_h.data.shape[-1]
+        #     nb_dims[traj.trace_o.name] = traj.trace_o.data.shape[-1]
+        #     self.nb_dims.append(nb_dims)
 
         self._create_net_fns(hidden_dim, encode_hints, processor_factory, use_lstm,
                              encoder_init, dropout_prob, hint_teacher_forcing,
@@ -189,7 +189,7 @@ class DFABaselineModel(model.Model):
                                    dropout_prob=dropout_prob,
                                    hint_teacher_forcing=hint_teacher_forcing,
                                    hint_repred_mode=hint_repred_mode,
-                                   nb_dims=self.nb_dims,
+                                   # nb_dims=self.nb_dims,
                                    nb_msg_passing_steps=self.nb_msg_passing_steps)(features_list,
                                                                                    repred,
                                                                                    algorithm_index,
@@ -205,6 +205,7 @@ class DFABaselineModel(model.Model):
         pmean = functools.partial(jax.lax.pmean, axis_name='batch')
         self._maybe_pmean = pmean if n_devices > 1 else lambda x: x
         extra_args[static_arg] = 3
+        # self.jitted_loss = func(self._compute_loss, **extra_args)
         self.jitted_grad = func(self._compute_grad, **extra_args)
         extra_args[static_arg] = 4
         self.jitted_feedback = func(self._feedback, donate_argnums=[0, 3],
@@ -215,7 +216,8 @@ class DFABaselineModel(model.Model):
         self.jitted_accum_opt_update = func(baselines.accum_opt_update, donate_argnums=[0, 2],
                                             **extra_args)
 
-    def init(self, features: Union[_Features, List[_Features]], seed: _Seed):
+    def init(self, features: Union[_Features, List[_Features]],
+             seed: _Seed):
         if not isinstance(features, list):
             assert len(self._spec) == 1
             features = [features]
@@ -279,6 +281,27 @@ class DFABaselineModel(model.Model):
                                     hard=True,
                                     )
         return outs, hint_preds
+
+    def compute_loss(
+            self,
+            rng_key: hk.PRNGSequence,
+            feedback: _Feedback,
+            algorithm_index: Optional[int] = None,
+    ) -> float:
+        """Compute gradients."""
+
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        assert algorithm_index >= 0
+
+        # Calculate gradients.
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
+        loss, _ = self.jitted_grad(
+            self._device_params, rng_keys, feedback, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
+        return loss
 
     def compute_grad(
             self,
@@ -384,9 +407,8 @@ class DFABaselineModel(model.Model):
             self._device_params, grads, self._device_opt_state, self.opt,
             self._freeze_processor)
 
-    def verbose_loss(self, feedback: _Feedback, extra_info) -> Dict[str, _Array]:
+    def verbose_loss(self, feedback: _Feedback, hint_preds: _Array) -> Dict[str, _Array]:
         """Gets verbose loss information."""
-        hint_preds = extra_info
 
         # nb_nodes = _nb_nodes(feedback, is_chunked=False)
         lengths = feedback.features.lengths

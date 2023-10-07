@@ -49,7 +49,7 @@ class DFANet(nets.Net):
             dropout_prob: float,
             hint_teacher_forcing: float,
             hint_repred_mode='soft',
-            nb_dims=None,
+            # nb_dims=None,
             nb_msg_passing_steps=1,
             name: str = 'dfa_net',
     ):
@@ -64,7 +64,7 @@ class DFANet(nets.Net):
                          dropout_prob=dropout_prob,
                          hint_teacher_forcing=hint_teacher_forcing,
                          hint_repred_mode=hint_repred_mode,
-                         nb_dims=nb_dims,
+                         nb_dims=None,
                          nb_msg_passing_steps=nb_msg_passing_steps,
                          name=name)
 

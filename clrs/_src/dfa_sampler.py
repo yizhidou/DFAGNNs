@@ -173,3 +173,14 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     return jax.tree_util.tree_map(lambda *x: np.concatenate(x,
                                                             axis=concat_dim),
                                   *ioh_dp_list_list)
+
+
+def FeedbackGenerator(dfa_sampler: DFASampler,
+                      batch_size: int):
+    while True:
+        yield dfa_sampler.next(batch_size=batch_size)
+
+
+def FeedbackGenerator_limited(dfa_sampler: DFASampler,
+                              batch_size: int):
+    yield dfa_sampler.next(batch_size=batch_size)
