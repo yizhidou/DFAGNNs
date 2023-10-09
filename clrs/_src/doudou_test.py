@@ -27,8 +27,8 @@ test_sampler = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name']
 
 train_feedback_generator = dfa_sampler.FeedbackGenerator(dfa_sampler=train_sampler,
                                                          batch_size=params_dict['dfa_sampler']['batch_size'])
-# feedback_list = [next(feedback_generator) for _ in range(5)]
-
+feedback_list = [next(train_feedback_generator) for _ in range(1)]
+exit(666)
 processor_factory = dfa_processors.get_dfa_processor_factory(**params_dict['processor'])
 
 dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,

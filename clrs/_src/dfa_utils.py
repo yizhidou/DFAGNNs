@@ -1,5 +1,5 @@
 from typing import List, Union, Dict
-import os, json
+import os, json, sys
 import numpy as np
 from programl.proto import *
 import programl
@@ -10,7 +10,7 @@ from clrs._src import dfa_specs, dfa_processors
 
 _Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
-
+np.set_printoptions(threshold=sys.maxsize)
 
 class YZDExcpetion(Exception):
     # the current sample has been previously recognized as errored
@@ -269,6 +269,7 @@ class SampleLoader:
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
+        print(f'dfa_utils line 272, selected_ip: {selected_ip_indices_base + num_pp}')
         # print(f'num_pp = {num_pp}; num_ip = {num_ip}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
@@ -377,7 +378,14 @@ class SampleLoader:
                                           np.expand_dims(gen_kill_idx_col_sparse, -1),
                                           np.expand_dims(kill_content_sparse, -1)],
                                          axis=1)
-
+            errored_num_gen = np.sum(1 * (gen_edges[:, 0] > (num_pp - 1)))
+            errored_num_kill = np.sum(1 * (kill_edges[:, 0] > (num_pp - 1)))
+            print(f'errored_num_gen = {errored_num_gen}')
+            print(f'errored_num_kill = {errored_num_kill}')
+            print(f'gen_sparse: {gen_sparse.shape}')
+            print(gen_sparse)
+            print(f'kill_sparse: {kill_sparse.shape}')
+            print(kill_sparse)
             cfg_sparse_array = cfg_sparse
             gen_sparse_array = gen_sparse
             kill_sparse_array = kill_sparse
@@ -401,12 +409,11 @@ class SampleLoader:
                                          np.expand_dims(gen_idx_col_sparse, -1),
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
-
-            cfg_sparse_array = cfg_sparse
-            gen_sparse_array = gen_sparse
-            print(
-                f'dfa_utils line 106, cfg_sparse_array: {cfg_sparse_array.shape}, {cfg_sparse_array.dtype}; gen_sparse_array = {gen_sparse_array.shape}, {gen_sparse_array.dtype}')
-            return [cfg_sparse_array, gen_sparse_array]
+            # print(
+            #     f'dfa_utils line 417, cfg_sparse_array: {cfg_sparse_array.shape}, {cfg_sparse_array.dtype}; gen_sparse_array = {gen_sparse_array.shape}, {gen_sparse_array.dtype}')
+            print('gen_sparse: ')
+            print(gen_sparse)
+            return [cfg_sparse, gen_sparse]
 
 
 def _get_analyze_task_name(task_name: str):
@@ -453,7 +460,8 @@ def parse_params(params_filepath: str):
     del params_dict['processor']['activation_name']
     return params_dict
 
+
 def dim_expand_to(x, y):
-  while len(y.shape) > len(x.shape):
-    x = jnp.expand_dims(x, -1)
-  return x
+    while len(y.shape) > len(x.shape):
+        x = jnp.expand_dims(x, -1)
+    return x
