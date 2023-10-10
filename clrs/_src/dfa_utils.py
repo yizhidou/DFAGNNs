@@ -70,7 +70,6 @@ class SamplePathProcessor:
         self.statistics_savepath = statistics_savepath
 
     def sourcegraph_savepath(self, sample_id):
-        # YZDTODO  这里没有写完
         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
 
     def _trace_savedir(self, task_name):
@@ -126,13 +125,10 @@ class SampleLoader:
             else:
                 with open(self.sample_path_processor.statistics_savepath) as log_reader:
                     self.statistics_dict = json.load(log_reader)
-        # self.rng = np.random.default_rng()
 
     def load_a_sample(self, task_name, sample_id):
-        # print('errored samples are not deduplicated!!!')
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
-        # print(f'{sample_id} is loading (util line 134)...')
         if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
             trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
             with open(trace_savepath, 'rb') as result_reader:
@@ -164,32 +160,29 @@ class SampleLoader:
                                                          task_name, sample_id) if self.if_save else None,
                                                      if_sync=self.if_sync,
                                                      if_idx_reorganized=self.if_idx_reorganized)
-            # print('utils line 165 done!')
             if len(cpperror) > 0:
-                print('utils line 167 cpperror > 0!')
+                print('new error occurs from cpp! (dfa_utils line 164)')
                 print(cpperror)
                 self.sample_path_processor.errored_sample_ids[sample_id] = 1
                 with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
                     error_sample_writer.write(f'{sample_id}: {YZDExcpetion.ANALYZE_ERRORED_SAMPLE}\n')
                 raise YZDExcpetion(YZDExcpetion.ANALYZE_ERRORED_SAMPLE, sample_id)
-            # print('utils line 174 done!')
             sample_statistics, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
-            # print('utils line 176 done!')
             if self.sample_path_processor.statistics_savepath:
                 self._merge_statistics(sample_id, sample_statistics)
             trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
                                                                                               trace_bytes=trace_chunck,
                                                                                               sample_id=sample_id,
                                                                                               selected_num_ip=self.selected_num_ip)
-            # print('utils line 183 done!')
+            print(f'dfa_utils line 177, len of trace_list = {len(trace_list)}')
+            for idx in range(len(trace_list)-1):
+                print(f'if trace_{idx} the same with trace_{idx+1}? {np.array_equal(trace_list[idx], trace_list[idx+1])}')
             array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                          edges_str=edge_chunck,
                                                          selected_ip_indices_base=selected_ip_indices_base)
-            # print('utils line 187 done!')
             if_pp, if_ip = self._get_node_type(task_name=task_name,
                                                selected_ip_indices_base=selected_ip_indices_base,
                                                num_pp=num_pp)
-            # print('utils line 191 done!')
             return trace_list, array_list, if_pp, if_ip
 
     def _merge_statistics(self, sample_id, new_statistics: Dict):
@@ -226,23 +219,17 @@ class SampleLoader:
         else:
             assert task_name == 'yzd_liveness' or task_name == 'yzd_reachability'
             sample_statistics['num_be(backward)'] = num_be
-        # print(f'line be is: {byte_str_be}; end_idx = {end_idx_be}')
         end_idx_pp, byte_str_pp = _get_a_line(star_idx=end_idx_be)
-        # print(f'line pp is: {byte_str_pp}; end_idx = {end_idx_pp}')
         _, _, num_pp = _parse_a_line(byte_str_pp)
         sample_statistics['num_pp'] = num_pp
         end_idx_ip, byte_str_ip = _get_a_line(star_idx=end_idx_pp)
-        # print(f'line ip is: {byte_str_ip}; end_idx = {end_idx_ip}')
         _, _, num_ip = _parse_a_line(byte_str_ip)
         sample_statistics['num_ip'] = num_ip
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
-        # print(f'line it is: {byte_str_it}; end_idx = {end_idx_it}')
         _, item_name, num_iteration = _parse_a_line(byte_str_it)
         sample_statistics[f'{item_name}_{task_name}'] = num_iteration
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
-        # print(f'line be du: {byte_str_du}; end_idx = {end_idx_du}')
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
-        # print(f'line size is: {byte_str_edge_size}; end_idx = {end_idx_edge_size}')
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
@@ -269,33 +256,23 @@ class SampleLoader:
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
-        print(f'dfa_utils line 272, selected_ip: {selected_ip_indices_base + num_pp}')
-        # print(f'num_pp = {num_pp}; num_ip = {num_ip}')
+        # print(f'dfa_utils line 272, selected_ip: {selected_ip_indices_base + num_pp}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
-        # if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-        # num_node = num_pp + num_ip
-        # selected_ip_indices = selected_ip_indices_base + num_pp
-        # else:
-        #     assert num_pp == num_ip
-        # num_node = num_pp
-        # selected_ip_indices = selected_ip_indices_base
         trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
         trace_list = []
         for trace_idx in range(trace_len):
             trace_content_base = np.zeros(shape=(num_pp, num_ip), dtype=int)
             trace_of_this_iteration = result_obj.results_every_iteration[trace_idx].result_map
-            # 要从这一个trace里转化出一个matrix来
+            # generate a matrix from the trace
             assert len(trace_of_this_iteration) == num_pp
             for source_node in trace_of_this_iteration.keys():
-                # target_node_list = list(trace_of_this_iteration[source_node].value)
                 target_node_list = trace_of_this_iteration[source_node].value
                 num_target_node = len(target_node_list)
                 if num_target_node == 0:
                     continue
-                # 相应值填进trace_matrix里
+                # put corresponding value into trace_matrix
                 trace_content_base[np.repeat(source_node, num_target_node), np.array(target_node_list) - num_pp] = 1
-            # print(f'util line 289, shape of trace_content_base = {trace_content_base.shape}')
             trace_content_sparse = trace_content_base[:, selected_ip_indices_base]
             # [num_pp, selected_num_ip]
             trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
@@ -345,7 +322,6 @@ class SampleLoader:
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 3))
             # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
             num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
-            # num_node = num_pp + num_ip
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
@@ -353,11 +329,8 @@ class SampleLoader:
             gen_edges = edges_saved_matrix[gen_row_indices, :-1]
             kill_edges = edges_saved_matrix[kill_row_indices, :-1]
 
-            # cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
             gen_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
             kill_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            # print(f'the shape of cfg_array is: {cfg_array.shape}; the shape of cfg_edges is: {cfg_edges.shape}')
-            # cfg_array[cfg_edges[:, 0], cfg_edges[:, 1]] = 1
             gen_array_dense[gen_edges[:, 0], gen_edges[:, 1] - num_pp] = 1
             kill_array_dense[kill_edges[:, 0], kill_edges[:, 1] - num_pp] = 1
 
@@ -378,14 +351,6 @@ class SampleLoader:
                                           np.expand_dims(gen_kill_idx_col_sparse, -1),
                                           np.expand_dims(kill_content_sparse, -1)],
                                          axis=1)
-            errored_num_gen = np.sum(1 * (gen_edges[:, 0] > (num_pp - 1)))
-            errored_num_kill = np.sum(1 * (kill_edges[:, 0] > (num_pp - 1)))
-            print(f'errored_num_gen = {errored_num_gen}')
-            print(f'errored_num_kill = {errored_num_kill}')
-            print(f'gen_sparse: {gen_sparse.shape}')
-            print(gen_sparse)
-            print(f'kill_sparse: {kill_sparse.shape}')
-            print(kill_sparse)
             cfg_sparse_array = cfg_sparse
             gen_sparse_array = gen_sparse
             kill_sparse_array = kill_sparse
@@ -394,10 +359,6 @@ class SampleLoader:
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
             num_pp = edges_saved_matrix[0, 0]
             cfg_sparse = edges_saved_matrix[1:, :]
-            # cfg_source = edges_saved_matrix[1:, 0]
-            # cfg_target = edges_saved_matrix[1:, 1]
-            # cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            # cfg_array[cfg_source, cfg_target] = 1
             gen_array_dense = np.identity(num_pp, dtype=int)
             gen_content_sparse = gen_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
             # [num_pp * selected_num_ip, ]
@@ -409,10 +370,6 @@ class SampleLoader:
                                          np.expand_dims(gen_idx_col_sparse, -1),
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
-            # print(
-            #     f'dfa_utils line 417, cfg_sparse_array: {cfg_sparse_array.shape}, {cfg_sparse_array.dtype}; gen_sparse_array = {gen_sparse_array.shape}, {gen_sparse_array.dtype}')
-            print('gen_sparse: ')
-            print(gen_sparse)
             return [cfg_sparse, gen_sparse]
 
 

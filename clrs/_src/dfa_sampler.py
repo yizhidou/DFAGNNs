@@ -40,6 +40,7 @@ class DFASampler(samplers.Sampler):
         self.sample_loader = sample_loader
         self.max_steps = self.sample_loader.max_iteration - 1
         self.max_num_pp = self.sample_loader.max_num_pp
+        random.seed(seed)
 
         samplers.Sampler.__init__(self,
                                   algorithm=getattr(algorithms, task_name),
@@ -49,9 +50,7 @@ class DFASampler(samplers.Sampler):
                                   if_estimate_max_step=False)
 
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
-        # print(f'sample_id_list = {self.sample_id_list}')
         sample_id = random.choice(seq=self.sample_id_list)
-        # print(f'randomly selected sample_id = {sample_id}')
         return sample_id
 
     def _make_batch(self, num_samples: int,
@@ -63,31 +62,15 @@ class DFASampler(samplers.Sampler):
         hint_dp_list_list = []  # trace_h
         edge_indices_dict_list = []
         mask_dict_list = []
-        # nb_nodes_this_batch = np.zeros(num_samples, int)
-        # nb_cfg_edges_this_batch = np.zeros(num_samples, int)
-        # nb_gkt_edges_this_batch = np.zeros(num_samples, int)
-        # hint_len_this_batch = np.zeros(num_samples, int)
 
         num_created_samples = 0
-
-        # debug start 1
-        # def _debug_sample_id_generator():
-        #     tmp_list = ['poj104_103.12226.4', 'poj104_103.12346.0', 'poj104_103.12453.0']
-        #     for sample_id in tmp_list:
-        #         yield sample_id
-
-        # debug end 1
-
         while num_created_samples < num_samples:
-            # print(f'num_created_samples = {num_created_samples}; num_samples = {num_samples}')
             sample_id = self._sample_data(*args, **kwargs)
-            # sample_id = next(_debug_sample_id_generator())
-            print(f'{sample_id} has been sampled... (dfa_sampler line 85)')
+            print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
                 edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
             except dfa_utils.YZDExcpetion as err:
-                print(f'{sample_id} errored!!! error_code: {err.error_code} (sampler line 88)')
-                # return
+                print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
                 continue
             print(f'{sample_id} succeed~~~ (sampler line 92)')
             num_created_samples += 1
