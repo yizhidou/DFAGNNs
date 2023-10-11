@@ -27,21 +27,24 @@ test_sampler = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name']
 
 train_feedback_generator = dfa_sampler.FeedbackGenerator(dfa_sampler=train_sampler,
                                                          batch_size=params_dict['dfa_sampler']['batch_size'])
-feedback_list = [next(train_feedback_generator) for _ in range(1)]
-exit(666)
+# feedback_list = [next(train_feedback_generator) for _ in range(1)]
+# exit(666)
 processor_factory = dfa_processors.get_dfa_processor_factory(**params_dict['processor'])
 
 dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,
                                                     **params_dict['dfa_net'],
                                                     **params_dict['baseline_model'])
 
-if os.path.isfile(os.path.join(dfa_baseline_model.checkpoint_path, params_dict['task']['model_save_name'])):
-    dfa_baseline_model.restore_model(file_name=params_dict['task']['model_save_name'])
-    print('the params are restored from ckpt!')
-else:
-    dfa_baseline_model.init(features=next(train_feedback_generator).features,
-                            seed=params_dict['task']['seed'])
-    print('no ckpt detected! so we init params from scratch!')
+# if os.path.isfile(os.path.join(dfa_baseline_model.checkpoint_path, params_dict['task']['model_save_name'])):
+#     dfa_baseline_model.restore_model(file_name=params_dict['task']['model_save_name'])
+#     print('the params are restored from ckpt!')
+# else:
+#     dfa_baseline_model.init(features=next(train_feedback_generator).features,
+#                             seed=params_dict['task']['seed'])
+#     print('no ckpt detected! so we init params from scratch!')
+dfa_baseline_model.init(features=next(train_feedback_generator).features,
+                        seed=params_dict['task']['seed'])
+exit(666)
 epoch_idx = 0
 while epoch_idx < params_dict['task']['nb_epochs']:
     # validate

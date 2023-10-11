@@ -69,9 +69,13 @@ class DFASampler(samplers.Sampler):
             print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
                 edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
-            except dfa_utils.YZDExcpetion as err:
-                print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
-                continue
+            except probing.ProbeError as err:
+                if isinstance(err, dfa_utils.YZDExcpetion):
+                    print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
+                    continue
+                else:
+                    print(err)
+                    return
             print(f'{sample_id} succeed~~~ (sampler line 92)')
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
@@ -86,13 +90,19 @@ class DFASampler(samplers.Sampler):
         batched_trace_o = _batch_ioh(outp_dp_list_list)[0]
         batched_trace_h = _batch_ioh(hint_dp_list_list)[0]
         batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x), *edge_indices_dict_list)
-        # print('dfa_sampler line 106')
-        # for idx, tmp_mask_dict in enumerate(mask_dict_list):
-        #     print(f'{idx}: {tmp_mask_dict}')
         batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(x), *mask_dict_list)
-        # print(f'dfa_sampler line 110')
-        # print(f'batched_mask_dict: {type(batched_mask_dict)}')
-        # print(batched_mask_dict)
+        # print('dfa_sampler line 94')    # checked
+        # print(f'len of batched_inp_dp_list is: {len(batched_inp_dp_list)}:')
+        # for inp_dp in batched_inp_dp_list:
+        #     print(f'{inp_dp.name}: {inp_dp.data.shape}')
+        # print(f'the shape of batched_trace_o: {batched_trace_o.data.shape}')    # [B, N]
+        # print(f'the shape of batched_trace_h: {batched_trace_h.data.shape}')    # [T, B, H]
+        # print('in batched_edge_indices_dict:')
+        # for key, value in batched_edge_indices_dict.items():
+        #     print(f'{key} shape: {value.shape}')    # [B, E, 2]
+        # print('in batched_mask_dict:')
+        # for key, value in batched_mask_dict.items():
+        #     print(f'{key}: {value}')
         return batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
 
     def next(self, batch_size: Optional[int] = None) -> Feedback:
@@ -116,7 +126,7 @@ class DFASampler(samplers.Sampler):
         # print(f'sampler line 116, the type of tmp is: {type(tmp)}; its len is: {len(tmp)}')
         batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
         # assert np.array_equal(lengths, sparse_lengths)
-        assert len(batched_inp_dp_list) == 7 if self.task_name == 'dfa_liveness' else 6
+        assert len(batched_inp_dp_list) == 6 if self.task_name == 'dfa_liveness' else 5
         print('~~~~~~~~~~ one batch has done! (sampler line 130) ~~~~~~~~~~')
         return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,

@@ -22,9 +22,10 @@ def dfa_liveness(dfa_sample_loader: dfa_utils.SampleLoader,
                      'kill': kill_sparse,
                      'if_pp': if_pp,
                      'if_ip': if_ip,
-                     'trace_i': trace_list[0]})
-
-    for time_idx in range(1, len(trace_list) - 1):
+                     # 'trace_i': trace_list[0]
+                 })
+    # for time_idx in range(1, len(trace_list) - 1):
+    for time_idx in range(0, len(trace_list) - 1):
         probing.push(probes,
                      specs.Stage.HINT,
                      next_probe={
@@ -62,9 +63,10 @@ def dfa_dominance(dfa_sample_loader: dfa_utils.SampleLoader,
                      'gen': gen_sparse,
                      'if_pp': if_pp,
                      'if_ip': if_ip,
-                     'trace_i': trace_list[0]
+                     # 'trace_i': trace_list[0]
                  })
-    for time_idx in range(1, len(trace_list) - 1):
+    # for time_idx in range(1, len(trace_list) - 1):
+    for time_idx in range(0, len(trace_list) - 1):
         probing.push(probes,
                      specs.Stage.HINT,
                      next_probe={
@@ -93,7 +95,6 @@ def dfa_reachability(dfa_sample_loader: dfa_utils.SampleLoader,
     trace_list, array_list, if_pp, if_ip = dfa_sample_loader.load_a_sample(task_name='dfa_reachability',
                                                                            sample_id=sample_id)
     cfg_sparse, gen_sparse = array_list
-    print(f'dfa_algorithm line 95, cfg_sparse: {cfg_sparse.dtype}; gen_sparse: {gen_sparse.dtype}')
     num_nodes = if_pp.shape[0]
     probes = probing.initialize(spec=dfa_specs.DFASPECS['dfa_reachability'])
     probing.push(probes,
@@ -104,9 +105,10 @@ def dfa_reachability(dfa_sample_loader: dfa_utils.SampleLoader,
                      'gen': gen_sparse,
                      'if_pp': if_pp,
                      'if_ip': if_ip,
-                     'trace_i': trace_list[0]
+                     # 'trace_i': trace_list[0]
                  })
-    for time_idx in range(1, len(trace_list) - 1):
+    # for time_idx in range(1, len(trace_list) - 1):
+    for time_idx in range(0, len(trace_list) - 1):
         probing.push(probes,
                      specs.Stage.HINT,
                      next_probe={

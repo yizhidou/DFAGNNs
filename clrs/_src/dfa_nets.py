@@ -336,13 +336,15 @@ class DFANet(nets.Net):
             dp_list_to_encode.append(trace_h_i)
 
         for dp in dp_list_to_encode:
+            dp_name, dp_loc = dp.name, dp.location
             encoder = encs[dp.name]
-            gkt_edge_fts = encoders.accum_edge_fts(encoder, dp, gkt_edge_fts)
+            if dp.location == specs.Location.EDGE and dp_name != 'cfg':
+                gkt_edge_fts = encoders.accum_edge_fts(encoder, dp, gkt_edge_fts)
             node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
 
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(
-            padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
+        # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
+        #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
         nxt_hidden = hidden
         for _ in range(self.nb_msg_passing_steps):
             nxt_hidden, nxt_edge = self.processor(

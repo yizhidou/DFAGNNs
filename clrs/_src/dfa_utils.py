@@ -6,13 +6,13 @@ import programl
 import random
 import jax
 import jax.numpy as jnp
-from clrs._src import dfa_specs, dfa_processors
+from clrs._src import dfa_specs, probing
 
 _Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
 np.set_printoptions(threshold=sys.maxsize)
 
-class YZDExcpetion(Exception):
+class YZDExcpetion(probing.ProbeError):
     # the current sample has been previously recognized as errored
     RECORDED_ERRORED_SAMPLE = 0
     # newly recognized error sample
