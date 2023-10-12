@@ -48,9 +48,9 @@ class DFANet(nets.Net):
             encoder_init: str,
             dropout_prob: float,
             hint_teacher_forcing: float,
+            nb_msg_passing_steps,
             hint_repred_mode='soft',
             # nb_dims=None,
-            nb_msg_passing_steps=1,
             name: str = 'dfa_net',
     ):
         """Constructs a `Net`."""
@@ -128,16 +128,16 @@ class DFANet(nets.Net):
 
             batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
 
-            # YZDTODO 这么看不知道trace_i是不是没有存在的必要了？
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
             hiddens = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-            print(f'dfa_nets line 134, nb_mp_steps = {nb_mp_steps}')
+            print(f'dfa_nets line 133, nb_mp_steps = {nb_mp_steps}')  # checked
             if self.use_lstm:
-                lstm_state = lstm_init(batch_size * nb_nodes_padded)
+                lstm_state = lstm_init(batch_size=batch_size * nb_nodes_padded)
                 lstm_state = jax.tree_util.tree_map(
                     lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
                     lstm_state)
-            #     YZDTODO 这个不太理解，但是lstm_state是个...function?
+                print(f'dfa_nets line 139, hidden: {lstm_state.hidden.shape}; cell: {lstm_state.cell.shape}')
+            #     [B, N, hidden_dim], [B, N, hidden_dim]
             else:
                 lstm_state = None
 
@@ -238,6 +238,8 @@ class DFANet(nets.Net):
                               return_hints: bool,
                               return_all_outputs: bool
                               ):
+        print(
+            f'dfa_nets line 241, i = {i}; repred = {repred}; return_hints = {return_hints}; return_all_outputs = {return_all_outputs}')
         trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
@@ -281,13 +283,13 @@ class DFANet(nets.Net):
             decs=decs,
             repred=repred)
         print(
-            f'dfa_nets line 272 hiddens: {hiddens.shape}; pred_trace_o_cand: {pred_trace_o_cand.shape}; hint_preds: {hint_preds.shape}, lstm_state: {type(lstm_state)}')
+            f'dfa_nets line 286 hiddens: {hiddens.shape}; pred_trace_o_cand: {pred_trace_o_cand.shape}; hint_preds: {hint_preds.shape}, lstm_state: {type(lstm_state)}')
         if first_step:
             pred_trace_o = pred_trace_o_cand
         else:
             # output_preds = {}
             # tmp = mask_dict['hint_len']
-            print(f'dfa_nets line 270-271, i = {i}; hint_len: {type(hint_len)}\nhint_len = {hint_len}')
+            print(f'dfa_nets line 292, i = {i}; hint_len: {type(hint_len)}\nhint_len = {hint_len}')
             is_not_done = nets._is_not_done_broadcast(hint_len, i,
                                                       pred_trace_o_cand)
             pred_trace_o = is_not_done * pred_trace_o_cand + (
@@ -311,7 +313,7 @@ class DFANet(nets.Net):
     def _dfa_one_step_pred(
             self,
             input_dp_list: _Trajectory,
-            trace_h_i: _chex_Array,
+            trace_h_i: probing.DataPoint,
             hidden: _chex_Array,
             batch_size: int,
             nb_nodes_padded: int,
