@@ -136,7 +136,7 @@ class DFANet(nets.Net):
                 lstm_state = jax.tree_util.tree_map(
                     lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
                     lstm_state)
-                print(f'dfa_nets line 139, hidden: {lstm_state.hidden.shape}; cell: {lstm_state.cell.shape}')
+                print(f'dfa_nets line 139, lstm_hidden: {lstm_state.hidden.shape}; lstm_cell: {lstm_state.cell.shape}')
             #     [B, N, hidden_dim], [B, N, hidden_dim]
             else:
                 lstm_state = None
@@ -348,6 +348,7 @@ class DFANet(nets.Net):
         # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
         #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
         nxt_hidden = hidden
+        nxt_edge = None
         for _ in range(self.nb_msg_passing_steps):
             nxt_hidden, nxt_edge = self.processor(
                 node_fts=node_fts,
@@ -356,18 +357,19 @@ class DFANet(nets.Net):
                 cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
                 gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
             )
-
+        print(f'dfa_nets line 360, processor done! repred = {repred}')
         if not repred:  # dropout only on training
             nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
 
         if self.use_lstm:
             # lstm doesn't accept multiple batch dimensions (in our case, batch and
             # nodes), so we vmap over the (first) batch dimension.
-            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(nxt_hidden, lstm_state)
+            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(inputs=nxt_hidden, prev_state=lstm_state)
         else:
             nxt_lstm_state = None
 
-        h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
+        h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)  # [B, N, 3*hidden_dim]
+        # print(f'dfa_nets line 372, h_t: {h_t.shape}')   # checked
         if nxt_edge is not None:
             e_t = jnp.concatenate([gkt_edge_fts, nxt_edge], axis=-1)
         else:
@@ -378,9 +380,10 @@ class DFANet(nets.Net):
         pred_trace_o, pred_trace_h_i = dfa_decoders.decode_fts(
             decoders=decs,
             h_t=h_t,
-            gkt_edge_fts=gkt_edge_fts,
+            gkt_edge_fts=e_t,
             gkt_edge_indices=padded_edge_indices_dict['gkt_indices_padded']
         )
+        print(f'dfa_nets line 386, pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
         return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
 

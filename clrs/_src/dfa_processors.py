@@ -98,51 +98,46 @@ class GATSparse(DFAProcessor):
         cfg_att_1 = a_1(cfg_z)  # [B, N, H]
         cfg_att_2 = a_2(cfg_z)  # [B, N, H]
         # print(f'cfg_processor line 100, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')    # checked
-        # cfg_logits = (
-        #         cfg_att_1[cfg_row_indices] +  # + [E_cfg, H]
-        #         cfg_att_2[cfg_col_indices]  # + [E_cfg, H]
-        # )  # = [E_cfg, H]
         cfg_logits = (jnp.take_along_axis(arr=cfg_att_1,
                                           indices=dfa_utils.dim_expand_to(cfg_row_indices,
                                                                           cfg_att_1),
-                                          axis=1)   # [B, E_cfg, nb_heads]
+                                          axis=1)  # [B, E_cfg, nb_heads]
                       +
                       jnp.take_along_axis(arr=cfg_att_2,
                                           indices=dfa_utils.dim_expand_to(cfg_col_indices,
                                                                           cfg_att_2),
-                                          axis=1))   # [B, E_cfg, nb_heads]
+                                          axis=1))  # [B, E_cfg, nb_heads]
+
         # print(f'dfa_processor line 114, shape of cfg_logits is: {cfg_logits.shape}')    # checked
 
         @jax.vmap
         def _cfg_unsorted_segment_softmax_batched(logits, segment_ids):
             return unsorted_segment_softmax(logits=logits,
                                             segment_ids=segment_ids,
-                                            num_segments=nb_cfg_edges_padded)   # [B, E_cfg, nb_heads]
+                                            num_segments=nb_cfg_edges_padded)  # [B, E_cfg, nb_heads]
 
         cfg_coefs = _cfg_unsorted_segment_softmax_batched(logits=jax.nn.leaky_relu(cfg_logits),
                                                           segment_ids=cfg_row_indices)
-        # cfg_coefs = unsorted_segment_softmax(logits=jax.nn.leaky_relu(cfg_logits),
-        #                                      segment_ids=cfg_row_indices,
-        #                                      num_segments=nb_cfg_edges_padded)
-        # [E_cfg, H]
-
         cfg_values = m(cfg_z)  # [B, N, hidden_dim]
         # print(f'dfa_processor line 130, cfg_values: {cfg_values.shape}; cfg_coefs: {cfg_coefs.shape}')  # checked
         cfg_values = jnp.reshape(
             cfg_values,
             cfg_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 134, cfg_values: {cfg_values.shape}')    # checked
-        # cfg_values_source = cfg_values[cfg_col_indices]  # [E_cfg, H, F]
         cfg_values_source = jnp.take_along_axis(arr=cfg_values,
                                                 indices=dfa_utils.dim_expand_to(cfg_col_indices, cfg_values),
-                                                axis=1) # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
+                                                axis=1)  # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 139, cfg_values_source: {cfg_values_source.shape}; cfg_coefs: {cfg_coefs.shape}')    # checked
-        cfg_hidden = jnp.expand_dims(cfg_coefs, axis=-1) * cfg_values_source  # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
+        cfg_hidden = jnp.expand_dims(cfg_coefs,
+                                     axis=-1) * cfg_values_source  # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
+
         # print(f'dfa_processor line 141, shape of cfg_hidden is: {cfg_hidden.shape}')    # checked
 
         @jax.vmap
-        def _segment_sum_batched(data, segment_ids):
-            print(f'dfa_processor line 145, \ndata: {data.shape}; \nsegment_ids: {segment_ids.shape}')
+        def _segment_sum_batched(data, # [E, nb_heads, hidden_dim/nb_heads]
+                                 segment_ids    # [E, ]
+                                 ):
+            # print(f'dfa_processor line 140, \ndata: {data.shape}; \nsegment_ids: {segment_ids.shape}')    # checked
             return jax.ops.segment_sum(data=data,
                                        segment_ids=segment_ids,
                                        num_segments=nb_nodes_padded)
@@ -162,24 +157,24 @@ class GATSparse(DFAProcessor):
         if self.use_ln:
             ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
             cfg_hidden = ln(cfg_hidden)
+        #     TODO(YZD)以上三个if是不是不应该出现在这里？
 
-        gkt_z = jnp.concatenate([node_fts, cfg_hidden], axis=-1)  # [N, 2*hidden_dim]
-        gkt_att_1 = a_1(gkt_z)  # [N, H]
-        gkt_att_2 = a_2(gkt_z)  # [N, H]
-        gkt_att_e = a_e(gkt_edge_fts)  # [E_gkt, H]
-        # NOT SURE att_g
-        # att_g = a_g(graph_fts)  # [B, H]
+        gkt_z = jnp.concatenate([node_fts, cfg_hidden], axis=-1)  # [B, N, 2*hidden_dim]
+        gkt_att_1 = a_1(gkt_z)  # [B, N, nb_heads]
+        gkt_att_2 = a_2(gkt_z)  # [B, N, nb_heads]
+        # TODO(YZD)这里应该和cfg_z共享a_1和a_2吗？
+        gkt_att_e = a_e(gkt_edge_fts)  # [B, E_gkt, nb_heads]
         gkt_logits = (
                 jnp.take_along_axis(arr=gkt_att_1,
                                     indices=dfa_utils.dim_expand_to(gkt_row_indices, gkt_att_1),
                                     axis=1)
-                +  # + [E_gkt, H]
+                +  # + [B, E_gkt, nb_heads]
                 jnp.take_along_axis(arr=gkt_att_2,
                                     indices=dfa_utils.dim_expand_to(gkt_col_indices, gkt_att_2),
                                     axis=1)
-                +  # + [E_gkt, H]
-                gkt_att_e  # + [E_gkt, H]  # + [E, H]
-        )  # = [E_gkt, H]
+                +  # + [B, E_gkt, nb_heads]
+                gkt_att_e  # + [B, E_gkt, nb_heads]
+        )  # = [B, E_gkt, nb_heads]
 
         @jax.vmap
         def _gkt_unsorted_segment_softmax_batched(logits, segment_ids):
@@ -188,23 +183,22 @@ class GATSparse(DFAProcessor):
                                             num_segments=nb_gkt_edges_padded)
 
         gkt_coefs = _gkt_unsorted_segment_softmax_batched(logits=jax.nn.leaky_relu(gkt_logits),
-                                                          segment_ids=gkt_row_indices)
+                                                          segment_ids=gkt_row_indices)  # [B, E_gkt, nb_heads]
 
-        gkt_values = m(gkt_z)  # [N, H*F]
+        gkt_values = m(gkt_z)  # [B, N, hidden_dim]
+        # TODO(YZD)这里也跟前面的cfg_z共享了m，不确定是否合理
         gkt_values = jnp.reshape(
             gkt_values,
-            gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [N, H, F]
+            gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         gkt_values_source = jnp.take_along_axis(arr=gkt_values,
                                                 indices=dfa_utils.dim_expand_to(gkt_col_indices, gkt_values),
-                                                axis=1)  # [E_gkt, H, F]
+                                                axis=1)  # [B, E_gkt, nb_heads, hidden_dim/nb_heads]
 
-        ret = jnp.expand_dims(gkt_coefs, axis=-1) * gkt_values_source  # [E_gkt, H, F]
-        # ret = jax.ops.segment_sum(data=ret,
-        #                           segment_ids=gkt_row_indices,
-        #                           num_segments=nb_nodes_padded)  # [N, H, F]
+        ret = jnp.expand_dims(gkt_coefs, axis=-1) * gkt_values_source
+        # [B, E_gkt, nb_heads, 1] * [B, E_gkt, nb_heads, hidden_dim/nb_heads] = [B, E_gkt, nb_heads, hidden_dim/nb_heads]
         ret = _segment_sum_batched(data=ret,
-                                   segment_ids=gkt_row_indices)
-        ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [N, H*F]
+                                   segment_ids=gkt_row_indices)  # [B, N, nb_heads, hidden_dim/nb_heads]
+        ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [B, N, hidden_dim]
 
         if self.residual:
             ret += skip(gkt_z)
@@ -215,12 +209,12 @@ class GATSparse(DFAProcessor):
         if self.use_ln:
             ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
             ret = ln(ret)
-        print(f'dfa_processor line 221, ret: {ret.shape}')  # [B, N, hidden_dim] [2, 150, 16]
+        # print(f'dfa_processor line 221, ret: {ret.shape}')  # [B, N, hidden_dim] [2, 150, 16]   # checked
         return ret, None  # pytype: disable=bad-return-type  # numpy-scalars
 
 
-def unsorted_segment_softmax(logits,  # [B, E, H]
-                             segment_ids,  # [B, E, 1]
+def unsorted_segment_softmax(logits,  # [E, nb_heads]
+                             segment_ids,  # [E, ]
                              num_segments):  # E
     """Returns softmax over each segment.
 
@@ -233,8 +227,8 @@ def unsorted_segment_softmax(logits,  # [B, E, H]
     Returns:
       Probabilities of the softmax, shape `[dim_0, ...]`.
     """
-    print(
-        f'dfa_processor line 192, \nlogits: {logits.shape}; \nsegment_ids: {segment_ids.shape}; \nnum_segments = {num_segments}')
+    # print(
+    #     f'dfa_processor line 231, \nlogits: {logits.shape}; \nsegment_ids: {segment_ids.shape}; \nnum_segments = {num_segments}')   # checked
     segment_max_ = jax.ops.segment_max(logits, segment_ids, num_segments)
     broadcast_segment_max = segment_max_[segment_ids]
     shifted_logits = logits - broadcast_segment_max

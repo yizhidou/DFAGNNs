@@ -34,30 +34,23 @@ def decode_fts(decoders,
 
 
 def _decode_gkt_edge_fts(decoders,
-                         h_t: _chex_Array,
-                         gkt_edge_fts: _chex_Array,
+                         h_t: _chex_Array,  # [B, N, 3*hidden_dim]
+                         gkt_edge_fts: _chex_Array,  # [B, E_gkt, hidden_dim]
                          gkt_edge_indices: _chex_Array) -> _chex_Array:
     """Decodes edge features."""
 
-    pred_1 = decoders[0](h_t)
-    pred_2 = decoders[1](h_t)
-    pred_e = decoders[2](gkt_edge_fts)
-    gkt_edges_row_indices = gkt_edge_indices[..., 0]
-    gkt_edges_col_indices = gkt_edge_indices[..., 1]
-    # preds = pred_1[gkt_edges_row_indices] + pred_2[gkt_edges_col_indices] + pred_e
-    # tmp1 = jnp.take_along_axis(arr=pred_1,
-    #                            indices=dfa_utils.dim_expand_to(gkt_edges_row_indices, pred_1),
-    #                            axis=1)
-    # tmp2 = jnp.take_along_axis(arr=pred_2,
-    #                            indices=dfa_utils.dim_expand_to(gkt_edges_col_indices, pred_2),
-    #                            axis=1)
-    # print(f'dfa_decoder line 48-54, pred_e: {pred_e.shape}; tmp1: {tmp1.shape}; tmp2: {tmp2.shape}')
+    pred_1 = decoders[0](h_t)  # [B, N, 1]
+    pred_2 = decoders[1](h_t)  # [B, N, 1]
+    pred_e = decoders[2](gkt_edge_fts)  # [B, E_gkt, 1]
+    gkt_edges_row_indices = gkt_edge_indices[..., 0]  # [B, E_gkt,]
+    gkt_edges_col_indices = gkt_edge_indices[..., 1]  # [B, E_gkt,]
     preds = jnp.take_along_axis(arr=pred_1,
                                 indices=dfa_utils.dim_expand_to(gkt_edges_row_indices, pred_1),
                                 axis=1) + \
             jnp.take_along_axis(arr=pred_2,
                                 indices=dfa_utils.dim_expand_to(gkt_edges_col_indices, pred_2),
                                 axis=1) + \
-            pred_e
-    preds = jnp.squeeze(preds, axis=-1)
+            pred_e  # [B, E_gkt, 1]
+    # print(f'dfa_decoders line 54, pred_1: {pred_1.shape}; pred_e: {pred_e.shape}; preds: {preds.shape}')    # checked
+    preds = jnp.squeeze(preds, axis=-1)  # [B, E_gkt]
     return preds
