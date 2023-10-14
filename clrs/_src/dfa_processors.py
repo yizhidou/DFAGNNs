@@ -95,8 +95,8 @@ class GATSparse(DFAProcessor):
         a_1 = hk.Linear(self.nb_heads)
         a_2 = hk.Linear(self.nb_heads)
         a_e = hk.Linear(self.nb_heads)
-        cfg_att_1 = a_1(cfg_z)  # [B, N, H]
-        cfg_att_2 = a_2(cfg_z)  # [B, N, H]
+        cfg_att_1 = a_1(cfg_z)  # [B, N, nb_heads]
+        cfg_att_2 = a_2(cfg_z)  # [B, N, nb_heads]
         # print(f'cfg_processor line 100, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')    # checked
         cfg_logits = (jnp.take_along_axis(arr=cfg_att_1,
                                           indices=dfa_utils.dim_expand_to(cfg_row_indices,
