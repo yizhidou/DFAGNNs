@@ -12,6 +12,7 @@ _Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
 np.set_printoptions(threshold=sys.maxsize)
 
+
 class YZDExcpetion(probing.ProbeError):
     # the current sample has been previously recognized as errored
     RECORDED_ERRORED_SAMPLE = 0
@@ -98,19 +99,23 @@ class SamplePathProcessor:
 
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
-                 max_iteration: int,
+                 # max_iteration: int,
+                 expected_hint_len: int,
                  max_num_pp: int,
                  gkt_edges_rate: int,
                  selected_num_ip: int,
-                 if_sync: bool = False,
+                 if_sync: bool,
                  if_idx_reorganized: bool = True,
                  if_save: bool = False):
         self.sample_path_processor = sample_path_processor
-        self.max_iteration = max_iteration
-        self.expected_hint_len = self.max_iteration - 1
+        self.expected_hint_len = expected_hint_len
         self.gkt_edges_rate = gkt_edges_rate
         self.max_num_pp = max_num_pp
         self.if_sync = if_sync
+        if self.if_sync:
+            self.max_iteration = 200
+        else:
+            self.max_iteration = self.expected_hint_len - 1
         self.if_idx_reorganized = if_idx_reorganized
         self.if_save = if_save
         self.selected_num_ip = selected_num_ip
@@ -167,16 +172,22 @@ class SampleLoader:
                 with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
                     error_sample_writer.write(f'{sample_id}: {YZDExcpetion.ANALYZE_ERRORED_SAMPLE}\n')
                 raise YZDExcpetion(YZDExcpetion.ANALYZE_ERRORED_SAMPLE, sample_id)
-            sample_statistics, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
+            sample_statistics, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
             if self.sample_path_processor.statistics_savepath:
                 self._merge_statistics(sample_id, sample_statistics)
+            if self.if_sync and printed_trace_len + 1 > self.expected_hint_len:
+                trace_start_idx = random.randint(0, printed_trace_len)
+            else:
+                trace_start_idx = 0
             trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
                                                                                               trace_bytes=trace_chunck,
                                                                                               sample_id=sample_id,
-                                                                                              selected_num_ip=self.selected_num_ip)
-            print(f'dfa_utils line 177, len of trace_list = {len(trace_list)}')
-            for idx in range(len(trace_list)-1):
-                print(f'if trace_{idx} the same with trace_{idx+1}? {np.array_equal(trace_list[idx], trace_list[idx+1])}')
+                                                                                              selected_num_ip=self.selected_num_ip,
+                                                                                              start_trace_idx=trace_start_idx)
+            print(f'dfa_utils line 177, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
+            for idx in range(len(trace_list) - 1):
+                print(
+                    f'if trace_{idx} the same with trace_{idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
             array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                          edges_str=edge_chunck,
                                                          selected_ip_indices_base=selected_ip_indices_base)
@@ -228,17 +239,19 @@ class SampleLoader:
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
         _, item_name, num_iteration = _parse_a_line(byte_str_it)
         sample_statistics[f'{item_name}_{task_name}'] = num_iteration
+        printed_trace_len = int(num_iteration)
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
-        return sample_statistics, edge_chunck, trace_chunck
+        return sample_statistics, printed_trace_len, edge_chunck, trace_chunck
 
     def _load_sparse_trace_from_bytes(self, task_name: Union[str, bytes],
                                       trace_bytes: bytes,
                                       sample_id: str,
-                                      selected_num_ip: int):
+                                      selected_num_ip: int,
+                                      start_trace_idx: int = 0):
         result_obj = ResultsEveryIteration()
         result_obj.ParseFromString(trace_bytes)
         num_pp = len(result_obj.program_points.value)
@@ -259,11 +272,17 @@ class SampleLoader:
         # print(f'dfa_utils line 272, selected_ip: {selected_ip_indices_base + num_pp}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
-        trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
+        full_trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
+        # if selected_trace_len is None:
+        #     selected_trace_len = trace_len
+        # assert trace_start_idx + selected_trace_len < trace_len + 1
         trace_list = []
-        for trace_idx in range(trace_len):
+        cur_trace_idx = start_trace_idx
+        while cur_trace_idx < min(full_trace_len, start_trace_idx + self.expected_hint_len):
+        # for trace_idx in range(trace_start_idx, trace_start_idx + self.expected_hint_len):
             trace_content_base = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            trace_of_this_iteration = result_obj.results_every_iteration[trace_idx].result_map
+            trace_of_this_iteration = result_obj.results_every_iteration[cur_trace_idx].result_map
+            cur_trace_idx += 1
             # generate a matrix from the trace
             assert len(trace_of_this_iteration) == num_pp
             for source_node in trace_of_this_iteration.keys():

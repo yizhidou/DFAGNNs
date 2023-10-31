@@ -38,7 +38,7 @@ class DFASampler(samplers.Sampler):
         self.sample_id_list = sample_id_list
         self.task_name = task_name
         self.sample_loader = sample_loader
-        self.max_steps = self.sample_loader.max_iteration - 1
+        self.expected_hint_len = self.sample_loader.expected_hint_len
         self.max_num_pp = self.sample_loader.max_num_pp
         random.seed(seed)
 
@@ -121,7 +121,7 @@ class DFASampler(samplers.Sampler):
         tmp = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,
-            min_length=self.max_steps,
+            min_length=self.expected_hint_len,
             algorithm=self._algorithm)
         # print(f'sampler line 116, the type of tmp is: {type(tmp)}; its len is: {len(tmp)}')
         batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
