@@ -103,17 +103,19 @@ def dfa_finalize(probes: _ProbesDict,
                 #     print(repr(tmp_data))
     padded_trace_o = probes[_Stage.OUTPUT][_Location.EDGE]['trace_o']['data']
     # [E, ]
-    repeated_trace_o = np.repeat(np.expand_dims(padded_trace_o, 0),
-                                 repeats=expected_hint_len - hint_len,
-                                 axis=0)
-    # [T-t, E]
-    probes[_Stage.HINT][_Location.EDGE]['trace_h']['data'] = np.concatenate([trace_h_padded,
-                                                                             repeated_trace_o],
-                                                                            axis=0)
-    tmp_data_trace_h = probes[_Stage.HINT][_Location.EDGE]['trace_h']['data']
-    print(f'dfa_probing line 113, trace_h: {tmp_data_trace_h.shape}')
-    for idx in range(tmp_data_trace_h.shape[0] - 1):
-        print(f'if trace_{idx} the same with trace_{idx}? {np.array_equal(tmp_data_trace_h[idx], tmp_data_trace_h[idx + 1])}')
+    if hint_len < expected_hint_len:
+        repeated_trace_o = np.repeat(np.expand_dims(padded_trace_o, 0),
+                                     repeats=expected_hint_len - hint_len,
+                                     axis=0)
+        # [T-t, E]
+        trace_h_padded = np.concatenate([trace_h_padded, repeated_trace_o], axis=0)
+    # else:
+    #     print(f'dfa_probing line 113, hint_len is equal to expected, so we did not pad it in time axis')
+    probes[_Stage.HINT][_Location.EDGE]['trace_h']['data'] = trace_h_padded
+    # tmp_data_trace_h = probes[_Stage.HINT][_Location.EDGE]['trace_h']['data']
+    # print(f'dfa_probing line 113, trace_h: {tmp_data_trace_h.shape}')
+    # for idx in range(tmp_data_trace_h.shape[0] - 1):
+    #     print(f'if trace_{idx} the same with trace_{idx+1}? {np.array_equal(tmp_data_trace_h[idx], tmp_data_trace_h[idx + 1])}')
     # [T, E]
     edge_indices_dict = dict(cfg_indices_padded=cfg_indices_padded,
                              gkt_indices_padded=gkt_indices_padded)

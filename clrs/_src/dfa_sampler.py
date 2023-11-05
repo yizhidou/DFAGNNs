@@ -66,6 +66,7 @@ class DFASampler(samplers.Sampler):
         num_created_samples = 0
         while num_created_samples < num_samples:
             sample_id = self._sample_data(*args, **kwargs)
+            # sample_id = 'poj104_103.12489.6'
             print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
                 edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)

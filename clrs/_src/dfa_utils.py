@@ -79,16 +79,18 @@ class SamplePathProcessor:
     def _edge_savedir(self, task_name):
         return os.path.join(self.dataset_savedir, task_name, 'Edges')
 
-    def trace_savepath(self, task_name, sample_id):
-        return os.path.join(self._trace_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.trace')
+    def trace_savepath(self, task_name, if_sync, sample_id):
+        tmp_str = "sync" if if_sync else "async"
+        return os.path.join(self._trace_savedir(task_name), tmp_str,
+                            sample_id + f'.{taskname_shorts[task_name]}.{tmp_str}.trace')
 
     def edge_savepath(self, task_name, sample_id):
         return os.path.join(self._edge_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.edge')
 
-    def if_sample_exists(self, task_name, sample_id):
+    def if_sample_exists(self, task_name, if_syn, sample_id):
         if not self.dataset_savedir:
             return False
-        trace_path_to_check = self.trace_savepath(task_name, sample_id)
+        trace_path_to_check = self.trace_savepath(task_name, if_syn, sample_id)
         edge_path_to_check = self.edge_savepath(task_name, sample_id)
         if not os.path.isfile(trace_path_to_check) or not os.path.isfile(edge_path_to_check):
             return False
@@ -100,22 +102,24 @@ class SamplePathProcessor:
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
                  # max_iteration: int,
-                 expected_hint_len: int,
+                 expected_trace_len: int,
                  max_num_pp: int,
                  gkt_edges_rate: int,
                  selected_num_ip: int,
                  if_sync: bool,
                  if_idx_reorganized: bool = True,
-                 if_save: bool = False):
+                 if_save: bool = False
+                 ):
         self.sample_path_processor = sample_path_processor
-        self.expected_hint_len = expected_hint_len
+        self.expected_trace_len = expected_trace_len
+        self.expected_hint_len = self.expected_trace_len - 1
         self.gkt_edges_rate = gkt_edges_rate
         self.max_num_pp = max_num_pp
         self.if_sync = if_sync
         if self.if_sync:
             self.max_iteration = 200
         else:
-            self.max_iteration = self.expected_hint_len - 1
+            self.max_iteration = self.expected_trace_len - 1
         self.if_idx_reorganized = if_idx_reorganized
         self.if_save = if_save
         self.selected_num_ip = selected_num_ip
@@ -134,8 +138,8 @@ class SampleLoader:
     def load_a_sample(self, task_name, sample_id):
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
-        if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
-            trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
+        if self.sample_path_processor.if_sample_exists(task_name=task_name, if_syn=self.if_sync, sample_id=sample_id):
+            trace_savepath = self.sample_path_processor.trace_savepath(task_name, self.if_sync, sample_id)
             with open(trace_savepath, 'rb') as result_reader:
                 trace_bytes_from_file = result_reader.read()
             edge_savepath = self.sample_path_processor.edge_savepath(task_name, sample_id)
@@ -175,8 +179,9 @@ class SampleLoader:
             sample_statistics, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
             if self.sample_path_processor.statistics_savepath:
                 self._merge_statistics(sample_id, sample_statistics)
-            if self.if_sync and printed_trace_len + 1 > self.expected_hint_len:
-                trace_start_idx = random.randint(0, printed_trace_len)
+            if self.if_sync and printed_trace_len + 1 > self.expected_trace_len:
+                trace_start_idx = random.randint(0, printed_trace_len - self.expected_trace_len)
+                print(f'dfa_utils line 183, trace_start_idx = {trace_start_idx}')
             else:
                 trace_start_idx = 0
             trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
@@ -184,10 +189,11 @@ class SampleLoader:
                                                                                               sample_id=sample_id,
                                                                                               selected_num_ip=self.selected_num_ip,
                                                                                               start_trace_idx=trace_start_idx)
-            print(f'dfa_utils line 177, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
+            print(
+                f'dfa_utils line 187, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
             for idx in range(len(trace_list) - 1):
                 print(
-                    f'if trace_{idx} the same with trace_{idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
+                    f'if trace_{idx + trace_start_idx} the same with trace_{trace_start_idx + idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
             array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                          edges_str=edge_chunck,
                                                          selected_ip_indices_base=selected_ip_indices_base)
@@ -269,7 +275,8 @@ class SampleLoader:
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
-        # print(f'dfa_utils line 272, selected_ip: {selected_ip_indices_base + num_pp}')
+        # selected_ip_indices_base = np.array([2,3,4,5,57])
+        # print(f'dfa_utils line 276, but for debug!!! selected_ip_base: {selected_ip_indices_base}')
         if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
             assert num_pp == num_ip
         full_trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
@@ -278,8 +285,8 @@ class SampleLoader:
         # assert trace_start_idx + selected_trace_len < trace_len + 1
         trace_list = []
         cur_trace_idx = start_trace_idx
-        while cur_trace_idx < min(full_trace_len, start_trace_idx + self.expected_hint_len):
-        # for trace_idx in range(trace_start_idx, trace_start_idx + self.expected_hint_len):
+        while cur_trace_idx < min(full_trace_len, start_trace_idx + self.expected_trace_len):
+            # for trace_idx in range(trace_start_idx, trace_start_idx + self.expected_trace_len):
             trace_content_base = np.zeros(shape=(num_pp, num_ip), dtype=int)
             trace_of_this_iteration = result_obj.results_every_iteration[cur_trace_idx].result_map
             cur_trace_idx += 1

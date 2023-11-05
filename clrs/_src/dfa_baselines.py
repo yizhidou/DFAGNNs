@@ -144,21 +144,6 @@ class DFABaselineModel(model.Model):
             self.opt = optax.adam(learning_rate)
 
         self.nb_msg_passing_steps = nb_msg_passing_steps
-
-        # self.nb_dims = []
-        # if isinstance(dummy_trajectory, _Feedback):
-        #     assert len(self._spec) == 1
-        #     dummy_trajectory = [dummy_trajectory]
-        # for traj in dummy_trajectory:
-        #     nb_dims = {}
-        #     # assert (traj, _Feedback)
-        #     # print(f'dfa_baseline line 155, to validate the assertion, traj: {type(traj)}')
-        #     for inp in traj.features.input_dp_list:
-        #         nb_dims[inp.name] = inp.data.shape[-1]
-        #     nb_dims[traj.features.trace_h.name] = traj.features.trace_h.data.shape[-1]
-        #     nb_dims[traj.trace_o.name] = traj.trace_o.data.shape[-1]
-        #     self.nb_dims.append(nb_dims)
-
         self._create_net_fns(hidden_dim, encode_hints, processor_factory, use_lstm,
                              encoder_init, dropout_prob, hint_teacher_forcing,
                              hint_repred_mode)
@@ -174,11 +159,13 @@ class DFABaselineModel(model.Model):
                         dropout_prob: float,
                         hint_teacher_forcing: float,
                         hint_repred_mode: str):
+        print('dfa_baselines line 162~ in __init__ _create_net_fns')
         def _use_net(features_list: List[_Features],
                      repred: bool,
                      algorithm_index: int,
                      return_hints: bool,
                      return_all_outputs: bool):
+            print('dfa_baselines line 168~ in _use_net')
             return dfa_nets.DFANet(spec=self._spec,
                                    hidden_dim=hidden_dim,
                                    encode_hints=encode_hints,
@@ -196,6 +183,7 @@ class DFABaselineModel(model.Model):
                                                                                    return_hints,
                                                                                    return_all_outputs)
 
+        # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)
         pmap_args = dict(axis_name='batch', devices=jax.local_devices())
         n_devices = jax.local_device_count()
@@ -221,6 +209,7 @@ class DFABaselineModel(model.Model):
         if not isinstance(features, list):
             assert len(self._spec) == 1
             features = [features]
+        print('dfa_baselines line 212~ in int')
         self.params = self.net_fn.init(rng=jax.random.PRNGKey(seed),
                                        features_list=features,
                                        repred=True,  # pytype: disable=wrong-arg-types  # jax-ndarray
@@ -244,6 +233,7 @@ class DFABaselineModel(model.Model):
 
     @property
     def opt_state(self):
+        print('dfa_baselines line 236~ in property opt_state')
         if self._device_opt_state is None:
             return None
         return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_opt_state))
@@ -253,11 +243,13 @@ class DFABaselineModel(model.Model):
         self._device_opt_state = baselines._maybe_put_replicated(opt_state)
 
     def _compute_grad(self, params, rng_key, feedback, algorithm_index):
+        print('dfa_baselines line 246~ in _compute_grad')
         lss, grads = jax.value_and_grad(self._loss)(
             params, rng_key, feedback, algorithm_index)
         return self._maybe_pmean(lss), self._maybe_pmean(grads)
 
     def _feedback(self, params, rng_key, feedback, opt_state, algorithm_index):
+        print('dfa_baselines line 252~ in _feedback')
         lss, grads = jax.value_and_grad(self._loss)(
             params, rng_key, feedback, algorithm_index)
         grads = self._maybe_pmean(grads)
@@ -269,6 +261,7 @@ class DFABaselineModel(model.Model):
     def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
                  algorithm_index: int, return_hints: bool,
                  return_all_outputs: bool):
+        print('dfa_baselines line 264~ in _predict')
         outs, hint_preds = self.net_fn.apply(
             params, rng_key, [features],
             repred=True, algorithm_index=algorithm_index,
@@ -294,7 +287,7 @@ class DFABaselineModel(model.Model):
             assert len(self._spec) == 1
             algorithm_index = 0
         assert algorithm_index >= 0
-
+        print('dfa_baselines line 290~ in compute_loss')
         # Calculate gradients.
         rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
         feedback = baselines._maybe_pmap_data(feedback)
@@ -310,7 +303,7 @@ class DFABaselineModel(model.Model):
             algorithm_index: Optional[int] = None,
     ) -> Tuple[float, _Array]:
         """Compute gradients."""
-
+        print('dfa_baselines line 306~ in compute_grad')
         if algorithm_index is None:
             assert len(self._spec) == 1
             algorithm_index = 0
@@ -333,6 +326,7 @@ class DFABaselineModel(model.Model):
             assert len(self._spec) == 1
             algorithm_index = 0
         # Calculate and apply gradients.
+        print('dfa_baselines line 329~ in feedback')
         rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
         feedback = baselines._maybe_pmap_data(feedback)
         loss, self._device_params, self._device_opt_state = self.jitted_feedback(
@@ -349,7 +343,7 @@ class DFABaselineModel(model.Model):
         if algorithm_index is None:
             assert len(self._spec) == 1
             algorithm_index = 0
-
+        print('dfa_baselines line 346~ in predict')
         rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
         features = baselines._maybe_pmap_data(features)
         return baselines._maybe_restack_from_pmap(
@@ -362,6 +356,7 @@ class DFABaselineModel(model.Model):
     def _loss(self, params, rng_key, feedback, algorithm_index):
         """Calculates model loss f(feedback; params)."""
         # output_preds, hint_preds \
+        print('dfa_baselines line 359~ in _loss')
         pred_trace_o, pred_trace_h_i = self.net_fn.apply(
             params, rng_key, [feedback.features],
             repred=False,
@@ -387,6 +382,7 @@ class DFABaselineModel(model.Model):
         return total_loss
 
     def _update_params(self, params, grads, opt_state, algorithm_index):
+        print('dfa_baselines line 385~ in _update_params')
         updates, opt_state = baselines.filter_null_grads(
             grads, self.opt, opt_state, self.opt_state_skeleton, algorithm_index)
         if self._freeze_processor:
@@ -434,6 +430,7 @@ class DFABaselineModel(model.Model):
 
     def restore_model(self, file_name: str, only_load_processor: bool = False):
         """Restore model from `file_name`."""
+        print('dfa_baselines line 433~ in restore_model')
         path = os.path.join(self.checkpoint_path, file_name)
         with open(path, 'rb') as f:
             restored_state = pickle.load(f)
@@ -445,6 +442,7 @@ class DFABaselineModel(model.Model):
             self.opt_state = restored_state['opt_state']
 
     def save_model(self, file_name: str):
+        print('dfa_baselines line 445~ in save_model')
         """Save model (processor weights only) to `file_name`."""
         os.makedirs(self.checkpoint_path, exist_ok=True)
         to_save = {'params': self.params, 'opt_state': self.opt_state}

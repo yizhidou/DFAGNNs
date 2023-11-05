@@ -34,7 +34,7 @@ processor_factory = dfa_processors.get_dfa_processor_factory(**params_dict['proc
 dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,
                                                     **params_dict['dfa_net'],
                                                     **params_dict['baseline_model'])
-
+print('doudou_test line 37 dfa_baseline_model __init__ done!')
 # if os.path.isfile(os.path.join(dfa_baseline_model.checkpoint_path, params_dict['task']['model_save_name'])):
 #     dfa_baseline_model.restore_model(file_name=params_dict['task']['model_save_name'])
 #     print('the params are restored from ckpt!')
@@ -44,7 +44,8 @@ dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_
 #     print('no ckpt detected! so we init params from scratch!')
 dfa_baseline_model.init(features=next(train_feedback_generator).features,
                         seed=params_dict['task']['seed'])
-exit(666)
+print('doudou_test line 47 dfa_baseline_model init done!')
+# exit(666)
 epoch_idx = 0
 while epoch_idx < params_dict['task']['nb_epochs']:
     # validate
