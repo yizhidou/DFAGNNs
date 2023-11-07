@@ -41,7 +41,7 @@ class DFASampler(samplers.Sampler):
         self.expected_hint_len = self.sample_loader.expected_hint_len
         self.max_num_pp = self.sample_loader.max_num_pp
         random.seed(seed)
-
+        self._iter_sample_id_list = iter(self.sample_id_list)
         samplers.Sampler.__init__(self,
                                   algorithm=getattr(algorithms, task_name),
                                   spec=dfa_specs.DFASPECS[task_name],
@@ -55,7 +55,9 @@ class DFASampler(samplers.Sampler):
 
     def _make_batch(self, num_samples: int,
                     spec: Spec, min_length: int,
-                    algorithm: samplers.Algorithm, *args, **kwargs):
+                    algorithm: samplers.Algorithm,
+                    if_vali_or_test: bool = False,
+                    *args, **kwargs):
         """Generate a batch of data."""
         inp_dp_list_list = []  # pos, if_pp, if_ip, cfg, gen, (kill,) trace_i
         outp_dp_list_list = []  # trace_o
@@ -65,7 +67,10 @@ class DFASampler(samplers.Sampler):
 
         num_created_samples = 0
         while num_created_samples < num_samples:
-            sample_id = self._sample_data(*args, **kwargs)
+            if if_vali_or_test:
+                sample_id = next(self._iter_sample_id_list)
+            else:
+                sample_id = self._sample_data(*args, **kwargs)
             # sample_id = 'poj104_103.12489.6'
             print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
@@ -106,7 +111,8 @@ class DFASampler(samplers.Sampler):
         #     print(f'{key}: {value}')
         return batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
 
-    def next(self, batch_size: Optional[int] = None) -> Feedback:
+    def next(self, batch_size: Optional[int] = None,
+             if_vali_or_test: bool = False) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
 
         Args:
@@ -123,7 +129,8 @@ class DFASampler(samplers.Sampler):
             num_samples=batch_size,
             spec=self._spec,
             min_length=self.expected_hint_len,
-            algorithm=self._algorithm)
+            algorithm=self._algorithm,
+            if_vali_or_test=if_vali_or_test)
         # print(f'sampler line 116, the type of tmp is: {type(tmp)}; its len is: {len(tmp)}')
         batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
         # assert np.array_equal(lengths, sparse_lengths)
@@ -170,11 +177,15 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
 
 
 def FeedbackGenerator(dfa_sampler: DFASampler,
-                      batch_size: int):
+                      batch_size: int,
+                      if_vali_or_test: bool = False):
     while True:
-        yield dfa_sampler.next(batch_size=batch_size)
+        yield dfa_sampler.next(batch_size=batch_size,
+                               if_vali_or_test=if_vali_or_test)
 
 
-def FeedbackGenerator_limited(dfa_sampler: DFASampler,
-                              batch_size: int):
-    yield dfa_sampler.next(batch_size=batch_size)
+# def FeedbackGenerator_limited(dfa_sampler: DFASampler,
+#                               batch_size: int):
+#     while True:
+#         yield dfa_sampler.next(batch_size=batch_size,
+#                                if_limit=True)

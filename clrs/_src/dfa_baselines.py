@@ -159,7 +159,7 @@ class DFABaselineModel(model.Model):
                         dropout_prob: float,
                         hint_teacher_forcing: float,
                         hint_repred_mode: str):
-        print('dfa_baselines line 162~ in __init__ _create_net_fns')
+        print('dfa_baselines line 162~ in __init__._create_net_fns')
         def _use_net(features_list: List[_Features],
                      repred: bool,
                      algorithm_index: int,
@@ -209,7 +209,7 @@ class DFABaselineModel(model.Model):
         if not isinstance(features, list):
             assert len(self._spec) == 1
             features = [features]
-        print('dfa_baselines line 212~ in int')
+        print('dfa_baselines line 212~ in init')
         self.params = self.net_fn.init(rng=jax.random.PRNGKey(seed),
                                        features_list=features,
                                        repred=True,  # pytype: disable=wrong-arg-types  # jax-ndarray

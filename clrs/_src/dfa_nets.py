@@ -53,6 +53,7 @@ class DFANet(nets.Net):
             # nb_dims=None,
             name: str = 'dfa_net',
     ):
+        print('dfa_nets line 56, in dfa_nets.__init__')
         """Constructs a `Net`."""
         super().__init__(spec=spec,
                          hidden_dim=hidden_dim,
@@ -101,6 +102,7 @@ class DFANet(nets.Net):
           A 2-tuple with (output predictions, hint predictions)
           for the selected algorithm.
         """
+        print('dfa_nets line 105, in dfa_nets.__call__')
         if algorithm_index == -1:
             algorithm_indices = range(len(features_list))
         else:
@@ -130,13 +132,14 @@ class DFANet(nets.Net):
 
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
             hiddens = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-            print(f'dfa_nets line 133, nb_mp_steps = {nb_mp_steps}')  # checked
+            print(f'dfa_nets line 135, in dfa_nets.__call__, nb_mp_steps = {nb_mp_steps}')  # checked
             if self.use_lstm:
                 lstm_state = lstm_init(batch_size=batch_size * nb_nodes_padded)
                 lstm_state = jax.tree_util.tree_map(
                     lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
                     lstm_state)
-                print(f'dfa_nets line 139, lstm_hidden: {lstm_state.hidden.shape}; lstm_cell: {lstm_state.cell.shape}')
+                print(
+                    f'dfa_nets line 141, in dfa_nets.__call lstm_hidden: {lstm_state.hidden.shape}; lstm_cell: {lstm_state.cell.shape}')
             #     [B, N, hidden_dim], [B, N, hidden_dim]
             else:
                 lstm_state = None
@@ -169,13 +172,20 @@ class DFANet(nets.Net):
                 first_step=True,
                 **common_args
             )
-            if return_hints and return_all_outputs:
-                print(  # [2(B), 750]; [2(B), 750]
-                    f'dfa_nets line 173, mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}')
-                print(f'lean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
-                print(  # [2(B), 750]; [2(B), 750]
-                    f'dfa_nets line 177, mp_state.pred_trace_h_i:{mp_state.pred_trace_h_i.shape}')
+            print('dfa_nets line 175, in dfa_nets.__call__, after the first call of _dfa_msg_passing_step:')
+            print(f'mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}; mp_state.pred_trace_h_i: {mp_state.pred_trace_h_i.shape}')
+            if return_hints:
+                print('since return_hint is True:')
                 print(f'lean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
+            else:
+                print('return_hint is False: ')
+                print(f'lean_mp_state.pred_trace_h_i = {lean_mp_state.pred_trace_h_i}')
+            if return_all_outputs:
+                print('since return_all_output is True:')
+                print(f'lean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
+            else:
+                print('return_all_output is False')
+                print(f'lean_mp_state.pred_trace_o = {lean_mp_state.pred_trace_o}')
             # Then scan through the rest.
             scan_fn = functools.partial(
                 self._dfa_msg_passing_step,
@@ -187,11 +197,20 @@ class DFANet(nets.Net):
                 mp_state,
                 jnp.arange(nb_mp_steps - 1) + 1,
                 length=nb_mp_steps - 1)
-        if return_hints and return_all_outputs:
-            print(  # [2, 750]; [3(T), 2, 750]
-                f'dfa_nets line 191,output_mp_state.pred_trace_o: {output_mp_state.pred_trace_o.shape}; accum_mp_state.pred_trace_o:{accum_mp_state.pred_trace_o.shape}')
-            print(  # [2, 750]; [3(T), 2, 750]
-                f'dfa_nets line 194,output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}; accum_mp_state.pred_trace_h_i:{accum_mp_state.pred_trace_h_i.shape}')
+            print('dfa_nets line 200, in dfa_nets.__call__, after the scan call of _dfa_msg_passing_step:')
+            print(f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+            if return_hints:
+                print('since return_hint is True:')
+                print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
+            else:
+                print('return_hint is False: ')
+                print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
+            if return_all_outputs:
+                print('since return_all_output is True:')
+                print(f'accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+            else:
+                print('return_all_output is False')
+                print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
@@ -199,21 +218,28 @@ class DFANet(nets.Net):
         accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
-        if return_hints and return_all_outputs:
-            print(
-                f'dfa_nets line 204, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
-            print(f'accumu_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
-
+        print('dfa_nets line 221, in dfa_nets.__call__, after the concat of lean_mp_state and accum_mp_state:')
+        if return_hints:
+            print('since return_hint is True:')
+            print(f'concated accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
+        else:
+            print('return_hint is False: ')
+            print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
+        if return_all_outputs:
+            print('since return_all_output is True:')
+            print(f'concated accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+        else:
+            print('return_all_output is False')
+            print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
         def invert(d):
             """Dict of lists -> list of dicts."""
             if d:
                 return [dict(zip(d, i)) for i in zip(*d.values())]
 
         if return_all_outputs:
-            # output_preds = {k: jnp.stack(v)
-            #                 for k, v in accum_mp_state.output_preds.items()}
             pred_trace_o = jnp.stack(accum_mp_state.pred_trace_o)
-            print(f'dfa_nets line 205, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+            print('since return_all_output=True,')
+            print(f'dfa_nets line 242, in dfa_nets.__call__, after stack, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
         #     YZDTODO 所以这个stack有啥用呢？？哦哦...可能是把所有的hints给stack到一起...
         else:
             pred_trace_o = output_mp_state.pred_trace_o
@@ -238,8 +264,8 @@ class DFANet(nets.Net):
                               return_hints: bool,
                               return_all_outputs: bool
                               ):
-        print(
-            f'dfa_nets line 241, i = {i}; repred = {repred}; return_hints = {return_hints}; return_all_outputs = {return_all_outputs}')
+        print('dfa_nets line 267, in dfa_nets._dfa_msg_passing_step')
+        print(f'i = {i}; repred = {repred}; return_hints = {return_hints}; return_all_outputs = {return_all_outputs}')
         trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
         if self.decode_hints and not first_step:
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
@@ -282,14 +308,11 @@ class DFANet(nets.Net):
             encs=encs,
             decs=decs,
             repred=repred)
-        print(
-            f'dfa_nets line 286 hiddens: {hiddens.shape}; pred_trace_o_cand: {pred_trace_o_cand.shape}; hint_preds: {hint_preds.shape}, lstm_state: {type(lstm_state)}')
+        print(f'dfa_nets line 311, in dfa_nets._dfa_msg_passing_step, after the call of _dfa_one_step_pred (processor):')
+        print(f'hiddens: {hiddens.shape}; pred_trace_o_cand: {pred_trace_o_cand.shape}; hint_preds: {hint_preds.shape}, lstm_state: {type(lstm_state)}')
         if first_step:
             pred_trace_o = pred_trace_o_cand
         else:
-            # output_preds = {}
-            # tmp = mask_dict['hint_len']
-            print(f'dfa_nets line 292, i = {i}; hint_len: {type(hint_len)}\nhint_len = {hint_len}')
             is_not_done = nets._is_not_done_broadcast(hint_len, i,
                                                       pred_trace_o_cand)
             pred_trace_o = is_not_done * pred_trace_o_cand + (
@@ -325,7 +348,7 @@ class DFANet(nets.Net):
             repred: bool,
     ):
         """Generates one-step predictions."""
-
+        print(f'dfa_nets line 351, in dfa_nets._dfa_one_step_pred')
         # Initialise empty node/edge/graph features and adjacency matrix.
         node_fts = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
         gkt_edge_fts = jnp.zeros((batch_size, nb_gkt_edges_padded, self.hidden_dim))
@@ -357,7 +380,6 @@ class DFANet(nets.Net):
                 cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
                 gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
             )
-        print(f'dfa_nets line 360, processor done! repred = {repred}')
         if not repred:  # dropout only on training
             nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
 
@@ -383,7 +405,8 @@ class DFANet(nets.Net):
             gkt_edge_fts=e_t,
             gkt_edge_indices=padded_edge_indices_dict['gkt_indices_padded']
         )
-        print(f'dfa_nets line 386, pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
+        print('dfa_nets line 408, in dfa_nets._dfa_one_step_pred, after prediction:')
+        print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
         return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
 

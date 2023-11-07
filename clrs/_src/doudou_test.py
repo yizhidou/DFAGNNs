@@ -16,15 +16,10 @@ train_sampler = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name'
                                        sample_id_list=params_dict['dfa_sampler']['train_sample_id_list'],
                                        seed=params_dict['task']['seed'],
                                        sample_loader=sample_loader)
-vali_sampler = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name'],
-                                      sample_id_list=params_dict['dfa_sampler']['vali_sample_id_list'],
-                                      seed=params_dict['task']['seed'],
-                                      sample_loader=sample_loader)
 test_sampler = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name'],
                                       sample_id_list=params_dict['dfa_sampler']['test_sample_id_list'],
                                       seed=params_dict['task']['seed'],
                                       sample_loader=sample_loader)
-
 train_feedback_generator = dfa_sampler.FeedbackGenerator(dfa_sampler=train_sampler,
                                                          batch_size=params_dict['dfa_sampler']['batch_size'])
 # feedback_list = [next(train_feedback_generator) for _ in range(1)]
@@ -42,24 +37,32 @@ print('doudou_test line 37 dfa_baseline_model __init__ done!')
 #     dfa_baseline_model.init(features=next(train_feedback_generator).features,
 #                             seed=params_dict['task']['seed'])
 #     print('no ckpt detected! so we init params from scratch!')
+
 dfa_baseline_model.init(features=next(train_feedback_generator).features,
                         seed=params_dict['task']['seed'])
 print('doudou_test line 47 dfa_baseline_model init done!')
-# exit(666)
 epoch_idx = 0
 while epoch_idx < params_dict['task']['nb_epochs']:
     # validate
-    vali_feedback_generator = dfa_sampler.FeedbackGenerator_limited(dfa_sampler=vali_sampler,
-                                                                    batch_size=params_dict['dfa_sampler']['batch_size'])
-    vali_batch_idx = 0.0
-    vali_loss = 0
-    for vali_feedback_batch in vali_feedback_generator:
-        batch_vali_loss = dfa_baseline_model.compute_loss(
-            rng_key=jax.random.PRNGKey(params_dict['task']['seed']),
-            feedback=vali_feedback_batch)
-        print(f'vali_batch {vali_batch_idx}: loss = {batch_vali_loss}')
-        vali_loss += batch_vali_loss
-        vali_batch_idx += 1
+    vali_sampler_this_epoch = dfa_sampler.DFASampler(task_name=params_dict['task']['task_name'],
+                                          sample_id_list=params_dict['dfa_sampler']['vali_sample_id_list'],
+                                          seed=params_dict['task']['seed'],
+                                          sample_loader=sample_loader)
+    vali_feedback_generator_this_epoch = dfa_sampler.FeedbackGenerator(dfa_sampler=vali_sampler_this_epoch,
+                                                            batch_size=params_dict['dfa_sampler']['batch_size'],
+                                                            if_vali_or_test=True)
+    vali_batch_idx, vali_loss = 0.0, 0.0
+    while True:
+        try:
+            vali_feedback_batch = next(vali_feedback_generator_this_epoch)
+            batch_vali_loss = dfa_baseline_model.compute_loss(
+                rng_key=jax.random.PRNGKey(params_dict['task']['seed']),
+                feedback=vali_feedback_batch)
+            print(f'vali_batch {int(vali_batch_idx)}: loss = {batch_vali_loss}')
+            vali_loss += batch_vali_loss
+            vali_batch_idx += 1
+        except:
+            break
     print(f'epoch {epoch_idx}: mean vali_loss = {vali_loss / vali_batch_idx}')
     # train
     train_batch_idx = 0.0
@@ -68,7 +71,7 @@ while epoch_idx < params_dict['task']['nb_epochs']:
         train_feedback_batch = next(train_feedback_generator)
         batch_train_loss = dfa_baseline_model.feedback(rng_key=jax.random.PRNGKey(params_dict['task']['seed']),
                                                        feedback=train_feedback_batch)
-        print(f'train_batch {train_batch_idx}: loss = {batch_train_loss}')
+        print(f'train_batch {int(train_batch_idx)}: loss = {batch_train_loss}')
         train_loss += batch_train_loss
         train_batch_idx += 1
     print(f'epoch {epoch_idx}: mean train_loss = {train_loss / train_batch_idx}')
