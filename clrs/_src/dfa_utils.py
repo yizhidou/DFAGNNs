@@ -181,7 +181,7 @@ class SampleLoader:
                 self._merge_statistics(sample_id, sample_statistics)
             if self.if_sync and printed_trace_len + 1 > self.expected_trace_len:
                 trace_start_idx = random.randint(0, printed_trace_len - self.expected_trace_len)
-                print(f'dfa_utils line 183, trace_start_idx = {trace_start_idx}')
+                # print(f'dfa_utils line 183, trace_start_idx = {trace_start_idx}')
             else:
                 trace_start_idx = 0
             trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
@@ -189,11 +189,11 @@ class SampleLoader:
                                                                                               sample_id=sample_id,
                                                                                               selected_num_ip=self.selected_num_ip,
                                                                                               start_trace_idx=trace_start_idx)
-            print(
-                f'dfa_utils line 187, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
-            for idx in range(len(trace_list) - 1):
-                print(
-                    f'if trace_{idx + trace_start_idx} the same with trace_{trace_start_idx + idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
+            # print(
+            #     f'dfa_utils line 187, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
+            # for idx in range(len(trace_list) - 1):
+            #     print(
+            #         f'if trace_{idx + trace_start_idx} the same with trace_{trace_start_idx + idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
             array_list = self._load_sparse_edge_from_str(task_name=task_name,
                                                          edges_str=edge_chunck,
                                                          selected_ip_indices_base=selected_ip_indices_base)
@@ -267,6 +267,8 @@ class SampleLoader:
                 error_sample_writer.write(f'{sample_id}: {YZDExcpetion.TOO_MANY_PP_NODES}\n')
             raise YZDExcpetion(YZDExcpetion.TOO_MANY_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
+        if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
+            assert num_pp == num_ip
         if num_ip < selected_num_ip:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
@@ -276,48 +278,48 @@ class SampleLoader:
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
         # selected_ip_indices_base = np.array([2,3,4,5,57])
-        # print(f'dfa_utils line 276, but for debug!!! selected_ip_base: {selected_ip_indices_base}')
-        if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
-            assert num_pp == num_ip
+        # print(
+        #     f'dfa_utils line 281, but for debug!!! selected_ip_base: {selected_ip_indices_base}; start_trace_idx = {start_trace_idx}')
         full_trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
-        # if selected_trace_len is None:
-        #     selected_trace_len = trace_len
-        # assert trace_start_idx + selected_trace_len < trace_len + 1
         trace_list = []
         cur_trace_idx = start_trace_idx
-        while cur_trace_idx < min(full_trace_len, start_trace_idx + self.expected_trace_len):
+        while cur_trace_idx < min(full_trace_len - 1, start_trace_idx + self.expected_trace_len):
             # for trace_idx in range(trace_start_idx, trace_start_idx + self.expected_trace_len):
-            trace_content_base = np.zeros(shape=(num_pp, num_ip), dtype=int)
+            trace_content_base = np.zeros(shape=(num_ip, num_pp), dtype=int)
             trace_of_this_iteration = result_obj.results_every_iteration[cur_trace_idx].result_map
             cur_trace_idx += 1
             # generate a matrix from the trace
             assert len(trace_of_this_iteration) == num_pp
-            for source_node in trace_of_this_iteration.keys():
-                target_node_list = trace_of_this_iteration[source_node].value
-                num_target_node = len(target_node_list)
-                if num_target_node == 0:
+            for pp in trace_of_this_iteration.keys():
+                active_ip_list = trace_of_this_iteration[pp].value
+                num_active_ip_node = len(active_ip_list)
+                if num_active_ip_node == 0:
                     continue
                 # put corresponding value into trace_matrix
-                trace_content_base[np.repeat(source_node, num_target_node), np.array(target_node_list) - num_pp] = 1
-            trace_content_sparse = trace_content_base[:, selected_ip_indices_base]
-            # [num_pp, selected_num_ip]
-            trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
+                if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
+                    trace_content_base[np.array(active_ip_list) - num_pp, np.repeat(pp, num_active_ip_node)] = 1
+                else:
+                    trace_content_base[np.array(active_ip_list), np.repeat(pp, num_active_ip_node)] = 1
+            trace_content_sparse = trace_content_base[selected_ip_indices_base, :]
+            # [selected_num_ip, num_pp]
+            # trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
+            trace_content_sparse = trace_content_sparse.reshape(-1, )  # [num_pp * selected_num_ip, ]
             if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
 
-                trace_idx_col_sparse = np.repeat(np.arange(num_pp, num_pp + selected_num_ip),
-                                                 [num_pp] * selected_num_ip)
+                trace_idx_source = np.repeat(np.arange(num_pp, num_pp + selected_num_ip),
+                                             [num_pp] * selected_num_ip)
                 # [num_pp * selected_num_ip, ]
             else:
-                trace_idx_col_sparse = np.repeat(selected_ip_indices_base,
-                                                 [num_pp] * selected_num_ip)
-            trace_idx_row_sparse = np.tile(np.arange(num_pp), selected_num_ip)
+                trace_idx_source = np.repeat(selected_ip_indices_base,
+                                             [num_pp] * selected_num_ip)
+            trace_idx_target = np.tile(np.arange(num_pp), selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            trace_sparse_data = np.concatenate([np.expand_dims(trace_idx_row_sparse, -1),
-                                                np.expand_dims(trace_idx_col_sparse, -1),
-                                                np.expand_dims(trace_content_sparse, -1)],
-                                               axis=1)
-            trace_sparse = trace_sparse_data
-
+            trace_sparse = np.concatenate([np.expand_dims(trace_idx_source, -1),
+                                           np.expand_dims(trace_idx_target, -1),
+                                           np.expand_dims(trace_content_sparse, -1)],
+                                          axis=1)
+            # print(f'dfa_utils line 321, cur_trace_idx = {cur_trace_idx - 1}, the shape is: {trace_sparse.shape} ')
+            # print(trace_sparse)
             trace_list.append(trace_sparse)
         # print(f'length of trace_list = {len(trace_list)}')
         return trace_list, selected_ip_indices_base, num_pp
@@ -351,52 +353,49 @@ class SampleLoader:
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
-            cfg_sparse = edges_saved_matrix[cfg_row_indices, :-1]
-            gen_edges = edges_saved_matrix[gen_row_indices, :-1]
-            kill_edges = edges_saved_matrix[kill_row_indices, :-1]
+            cfg_edges = edges_saved_matrix[cfg_row_indices, :-1]
+            gen_edges = edges_saved_matrix[gen_row_indices, :-1][:, [1, 0]]
+            kill_edges = edges_saved_matrix[kill_row_indices, :-1][:, [1, 0]]
 
-            gen_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            kill_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            gen_array_dense[gen_edges[:, 0], gen_edges[:, 1] - num_pp] = 1
-            kill_array_dense[kill_edges[:, 0], kill_edges[:, 1] - num_pp] = 1
+            gen_array_dense = np.zeros(shape=(num_ip, num_pp), dtype=int)
+            kill_array_dense = np.zeros(shape=(num_ip, num_pp), dtype=int)
+            gen_array_dense[gen_edges[:, 0] - num_pp, gen_edges[:, 1]] = 1
+            kill_array_dense[kill_edges[:, 0] - num_pp, kill_edges[:, 1]] = 1
 
-            gen_content_sparse = gen_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
+            gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
             # [num_pp * selected_num_ip, ]
-            kill_content_sparse = kill_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
+            kill_content_sparse = kill_array_dense[selected_ip_indices_base, :].reshape(-1, )
             # [num_pp * selected_num_ip, ]
-            gen_kill_idx_row_sparse = np.tile(np.arange(num_pp), self.selected_num_ip)
+            gen_kill_idx_target = np.tile(np.arange(num_pp), self.selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            gen_kill_idx_col_sparse = np.repeat(np.arange(num_pp, num_pp + self.selected_num_ip),
-                                                [num_pp] * self.selected_num_ip)
+            gen_kill_idx_source = np.repeat(np.arange(num_pp, num_pp + self.selected_num_ip),
+                                            [num_pp] * self.selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            gen_sparse = np.concatenate([np.expand_dims(gen_kill_idx_row_sparse, -1),
-                                         np.expand_dims(gen_kill_idx_col_sparse, -1),
+            gen_sparse = np.concatenate([np.expand_dims(gen_kill_idx_source, -1),
+                                         np.expand_dims(gen_kill_idx_target, -1),
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
-            kill_sparse = np.concatenate([np.expand_dims(gen_kill_idx_row_sparse, -1),
-                                          np.expand_dims(gen_kill_idx_col_sparse, -1),
+            kill_sparse = np.concatenate([np.expand_dims(gen_kill_idx_source, -1),
+                                          np.expand_dims(gen_kill_idx_target, -1),
                                           np.expand_dims(kill_content_sparse, -1)],
                                          axis=1)
-            cfg_sparse_array = cfg_sparse
-            gen_sparse_array = gen_sparse
-            kill_sparse_array = kill_sparse
-            return [cfg_sparse_array, gen_sparse_array, kill_sparse_array]
+            return [cfg_edges, gen_sparse, kill_sparse]
         else:
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
             num_pp = edges_saved_matrix[0, 0]
-            cfg_sparse = edges_saved_matrix[1:, :]
+            cfg_edges = edges_saved_matrix[1:, :]
             gen_array_dense = np.identity(num_pp, dtype=int)
-            gen_content_sparse = gen_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
+            gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
             # [num_pp * selected_num_ip, ]
-            gen_idx_row_sparse = np.tile(np.arange(num_pp), self.selected_num_ip)
+            gen_idx_target = np.tile(np.arange(num_pp), self.selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            gen_idx_col_sparse = np.repeat(selected_ip_indices_base,
-                                           [num_pp] * self.selected_num_ip)
-            gen_sparse = np.concatenate([np.expand_dims(gen_idx_row_sparse, -1),
-                                         np.expand_dims(gen_idx_col_sparse, -1),
+            gen_idx_source = np.repeat(selected_ip_indices_base,
+                                       [num_pp] * self.selected_num_ip)
+            gen_sparse = np.concatenate([np.expand_dims(gen_idx_source, -1),
+                                         np.expand_dims(gen_idx_target, -1),
                                          np.expand_dims(gen_content_sparse, -1)],
                                         axis=1)
-            return [cfg_sparse, gen_sparse]
+            return [cfg_edges, gen_sparse]
 
 
 def _get_analyze_task_name(task_name: str):

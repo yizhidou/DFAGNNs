@@ -22,7 +22,7 @@ def dfa_finalize(probes: _ProbesDict,
     nb_cfg_edges = None
     nb_gkt_edges = None
     hint_len = None
-
+    # print(f'dfa_probing line 25 expected_nb_nodes = {expected_nb_nodes}')
     gkt_indices_padded = None
     cfg_indices_padded = None
     gkt_indices_padding = None
@@ -40,10 +40,6 @@ def dfa_finalize(probes: _ProbesDict,
                         nb_gkt_edges = stacked_trace_h.shape[1]
                     else:
                         assert nb_gkt_edges == stacked_trace_h.shape[1]
-                    # trace_h_zero_padding = np.repeat(np.expand_dims(np.zeros(expected_nb_gkt_edge - nb_gkt_edges),
-                    #                                                 axis=0),
-                    #                                  repeats=hint_len,
-                    #                                  axis=0)
                     trace_h_mask_padding = np.repeat(
                         np.expand_dims(specs.OutputClass.MASKED * np.ones(expected_nb_gkt_edge - nb_gkt_edges),
                                        axis=0),
@@ -53,6 +49,8 @@ def dfa_finalize(probes: _ProbesDict,
                     trace_h_padded = np.concatenate([stacked_trace_h, trace_h_mask_padding],
                                                     axis=1)
                     #   [t, E]
+                    # print(
+                    #     f'dfa_probing line 52, stacked_trace_h: {stacked_trace_h.shape}; trace_h_padded: {trace_h_padded.shape}')
                 else:
                     len(probes[stage][loc][name]['data']) == 1
                     old_data = probes[stage][loc][name]['data'][0]
@@ -97,6 +95,8 @@ def dfa_finalize(probes: _ProbesDict,
                                                                            # np.zeros(expected_nb_gkt_edge - nb_gkt_edges)])
                                                                            specs.OutputClass.MASKED * np.ones(
                                                                                expected_nb_gkt_edge - nb_gkt_edges)])
+                    # print(f'dfa_probing line 100 name = {name}, shape: {old_data.shape}')
+                    # print(old_data)
                 # if name != 'trace_h':
                 #     tmp_data = probes[stage][loc][name]['data']
                 #     print(f'dfa_probing line 101, {name}: {tmp_data.shape}')
@@ -123,10 +123,15 @@ def dfa_finalize(probes: _ProbesDict,
                      nb_cfg_edges=nb_cfg_edges,
                      nb_gkt_edges=nb_gkt_edges,
                      hint_len=hint_len)
-    print('dfa_probing line 117')
-    # print(f'cfg_inidices_padded: {cfg_indices_padded.shape}')
+    print('dfa_probing line 126')
+    # print(f'cfg_inidices_padded: \n{cfg_indices_padded}')
     # print(cfg_indices_padded) # checked~
-    # print(f'gkt_indices_padded: {gkt_indices_padded.shape}')
+    # print(f'gkt_indices_padded: \n{gkt_indices_padded}')
+    tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['gen']['data']
+    # print(f'gen_padded: \n{tmp}')
+    # if 'kill' in probes[specs.Stage.INPUT][specs.Location.EDGE]:
+    #     tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['kill']['data']
+    #     print(f'kill_padded: \n{tmp}')
     # print(gkt_indices_padded)   # checked~
     print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; nb_gkt_edges: {nb_gkt_edges}; hint_len: {hint_len}')
     return edge_indices_dict, mask_dict
