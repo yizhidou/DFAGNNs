@@ -1,29 +1,31 @@
 from typing import List, Union, Dict
-import os, json
+import os, json, sys
 import numpy as np
 from programl.proto import *
 import programl
 import random
 import jax
-from clrs._src import yzd_probing, yzd_specs
+import jax.numpy as jnp
+from clrs._src import dfa_specs, probing
 
-_ArraySparse = yzd_probing.ArraySparse
-_ArrayDense = yzd_probing.ArrayDense
-_Array = yzd_probing.Array
+_Array = np.ndarray
 taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='yr')
+np.set_printoptions(threshold=sys.maxsize)
 
 
-class YZDExcpetion(Exception):
+class YZDExcpetion(probing.ProbeError):
     # the current sample has been previously recognized as errored
-    RECORDED_ERRORED_SAMPLE = 1
+    RECORDED_ERRORED_SAMPLE = 0
     # newly recognized error sample
-    NEWLY_ERRORED_SAMPLE = 2
+    ANALYZE_ERRORED_SAMPLE = 1
     # too few interested points error (less than selected num)
-    TOO_FEW_IP_NODES = 3
+    TOO_FEW_IP_NODES = 2
     # too much program points error
-    TOO_MANY_PP_NODES = 4
+    TOO_MANY_PP_NODES = 3
 
-    UNRECOGNIZED_ACTIVATION_TYPE = 5
+    UNRECOGNIZED_ACTIVATION_TYPE = 4
+
+    UNRECOGNIZED_TASK_NAME = 5
 
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
@@ -34,14 +36,16 @@ class YZDExcpetion(Exception):
     def error_msg(self):
         if self.error_code == self.RECORDED_ERRORED_SAMPLE:
             msg = 'This sample has previously been recorded as errored!'
-        elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
-            msg = 'This sample is newly recognized errored, we have now recorded it!'
+        # elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
+        #     msg = 'This sample is newly recognized errored, we have now recorded it!'
         elif self.error_code == self.TOO_FEW_IP_NODES:
             msg = 'This sample has too few IP nodes, so we drop it!'
         elif self.error_code == self.TOO_MANY_PP_NODES:
             msg = 'This sample has too many PP nodes, so we drop it!'
         elif self.error_code == self.UNRECOGNIZED_ACTIVATION_TYPE:
             msg = 'Unrecognized activation type! please check your spelling!'
+        elif self.error_code == self.UNRECOGNIZED_TASK_NAME:
+            msg = 'Unrecognized task name! please check your spelling!'
         else:
             msg = 'Unrecognized error!'
         if self.sample_id:
@@ -64,14 +68,13 @@ class SamplePathProcessor:
         else:
             with open(errorlog_savepath) as errored_reader:
                 for line in errored_reader.readlines():
-                    self.errored_sample_ids[line.strip()] = 1
+                    errored_sample_id = line.split(':')[0].strip()
+                    self.errored_sample_ids[errored_sample_id] = 1
         self.errorlog_savepath = errorlog_savepath
         self.dataset_savedir = dataset_savedir
         self.statistics_savepath = statistics_savepath
 
     def sourcegraph_savepath(self, sample_id):
-        # YZDTODO  这里没有写完
-        print(f'sample_id = {sample_id}')
         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
 
     def _trace_savedir(self, task_name):
@@ -80,16 +83,18 @@ class SamplePathProcessor:
     def _edge_savedir(self, task_name):
         return os.path.join(self.dataset_savedir, task_name, 'Edges')
 
-    def trace_savepath(self, task_name, sample_id):
-        return os.path.join(self._trace_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.trace')
+    def trace_savepath(self, task_name, if_sync, sample_id):
+        tmp_str = "sync" if if_sync else "async"
+        return os.path.join(self._trace_savedir(task_name), tmp_str,
+                            sample_id + f'.{taskname_shorts[task_name]}.{tmp_str}.trace')
 
     def edge_savepath(self, task_name, sample_id):
         return os.path.join(self._edge_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.edge')
 
-    def if_sample_exists(self, task_name, sample_id):
+    def if_sample_exists(self, task_name, if_syn, sample_id):
         if not self.dataset_savedir:
             return False
-        trace_path_to_check = self.trace_savepath(task_name, sample_id)
+        trace_path_to_check = self.trace_savepath(task_name, if_syn, sample_id)
         edge_path_to_check = self.edge_savepath(task_name, sample_id)
         if not os.path.isfile(trace_path_to_check) or not os.path.isfile(edge_path_to_check):
             return False
@@ -100,23 +105,27 @@ class SamplePathProcessor:
 
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
-                 max_iteration: int,
+                 # max_iteration: int,
+                 expected_trace_len: int,
                  max_num_pp: int,
-                 gkt_edges_rate: int,
+                 cfg_edges_rate: int,
                  selected_num_ip: int,
-                 if_sync: bool = False,
+                 if_sync: bool,
                  if_idx_reorganized: bool = True,
-                 if_save: bool = False,
-                 if_sparse: bool = True):
+                 if_save: bool = False
+                 ):
         self.sample_path_processor = sample_path_processor
-        self.max_iteration = max_iteration
-        self.expected_hint_len = self.max_iteration - 1
-        self.gkt_edges_rate = gkt_edges_rate
+        self.expected_trace_len = expected_trace_len
+        self.expected_hint_len = self.expected_trace_len - 1
+        self.cfg_edges_rate = cfg_edges_rate
         self.max_num_pp = max_num_pp
         self.if_sync = if_sync
+        if self.if_sync:
+            self.max_iteration = 200
+        else:
+            self.max_iteration = self.expected_trace_len - 1
         self.if_idx_reorganized = if_idx_reorganized
         self.if_save = if_save
-        self.if_sparse = if_sparse
         self.selected_num_ip = selected_num_ip
         if not self.sample_path_processor.dataset_savedir:
             self.if_save = False
@@ -129,38 +138,26 @@ class SampleLoader:
             else:
                 with open(self.sample_path_processor.statistics_savepath) as log_reader:
                     self.statistics_dict = json.load(log_reader)
-        # self.rng = np.random.default_rng()
 
     def load_a_sample(self, task_name, sample_id):
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise YZDExcpetion(YZDExcpetion.RECORDED_ERRORED_SAMPLE, sample_id)
-        if self.sample_path_processor.if_sample_exists(task_name=task_name, sample_id=sample_id):
-            trace_savepath = self.sample_path_processor.trace_savepath(task_name, sample_id)
+        if self.sample_path_processor.if_sample_exists(task_name=task_name, if_syn=self.if_sync, sample_id=sample_id):
+            trace_savepath = self.sample_path_processor.trace_savepath(task_name, self.if_sync, sample_id)
             with open(trace_savepath, 'rb') as result_reader:
                 trace_bytes_from_file = result_reader.read()
             edge_savepath = self.sample_path_processor.edge_savepath(task_name, sample_id)
             with open(edge_savepath) as edges_reader:
                 edges_bytes_from_file = edges_reader.read()
-            if self.if_sparse:
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_bytes_from_file,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip)
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edges_bytes_from_file,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type(task_name=task_name,
-                                                   selected_ip_indices_base=selected_ip_indices_base,
-                                                   num_pp=num_pp)
-                return trace_list, array_list, if_pp, if_ip
-            else:
-                trace_list = self._load_dense_trace_from_bytes(task_name=task_name,
-                                                               trace_bytes=trace_bytes_from_file)
-                array_list = self._load_dense_edge_from_str(task_name=task_name,
-                                                            edges_str=edges_bytes_from_file)
-                return trace_list, array_list
+            trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
+                                                                                              trace_bytes=trace_bytes_from_file,
+                                                                                              sample_id=sample_id,
+                                                                                              selected_num_ip=self.selected_num_ip)
+            array_list = self._load_sparse_edge_from_str(task_name=task_name,
+                                                         edges_str=edges_bytes_from_file,
+                                                         selected_ip_indices_base=selected_ip_indices_base)
         else:
-            cpp_out, cpperror = programl.yzd_analyze(task_name=task_name,
+            cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
                                                      max_iteration=self.max_iteration,
                                                      program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
                                                          sample_id),
@@ -171,29 +168,29 @@ class SampleLoader:
                                                      if_sync=self.if_sync,
                                                      if_idx_reorganized=self.if_idx_reorganized)
             if len(cpperror) > 0:
+                print('new error occurs from cpp! (dfa_utils line 164)')
+                print(cpperror)
                 self.sample_path_processor.errored_sample_ids[sample_id] = 1
                 with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                    error_sample_writer.write(sample_id + '\n')
-                raise YZDExcpetion(YZDExcpetion.NEWLY_ERRORED_SAMPLE, sample_id)
-            sample_statistics, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
+                    error_sample_writer.write(f'{sample_id}: {YZDExcpetion.ANALYZE_ERRORED_SAMPLE}\n')
+                raise YZDExcpetion(YZDExcpetion.ANALYZE_ERRORED_SAMPLE, sample_id)
+            sample_statistics, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
             if self.sample_path_processor.statistics_savepath:
                 self._merge_statistics(sample_id, sample_statistics)
-            if self.if_sparse:
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_chunck,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip)
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edge_chunck,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type(task_name=task_name,
-                                                   selected_ip_indices_base=selected_ip_indices_base,
-                                                   num_pp=num_pp)
-                return trace_list, array_list, if_pp, if_ip
+            if self.if_sync and printed_trace_len + 1 > self.expected_trace_len:
+                trace_start_idx = random.randint(0, printed_trace_len - self.expected_trace_len)
+                # print(f'dfa_utils line 183, trace_start_idx = {trace_start_idx}')
             else:
-                trace_list = self._load_dense_trace_from_bytes(task_name, trace_chunck)
-                array_list = self._load_dense_edge_from_str(task_name, edge_chunck)
-                return trace_list, array_list
+                trace_start_idx = 0
+            trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
+                                                                                              trace_bytes=trace_chunck,
+                                                                                              sample_id=sample_id,
+                                                                                              selected_num_ip=self.selected_num_ip,
+                                                                                              start_trace_idx=trace_start_idx)
+            array_list = self._load_sparse_edge_from_str(task_name=task_name,
+                                                         edges_str=edge_chunck,
+                                                         selected_ip_indices_base=selected_ip_indices_base)
+        return trace_list, array_list
 
     def _merge_statistics(self, sample_id, new_statistics: Dict):
         if not sample_id in self.statistics_dict:
@@ -229,257 +226,156 @@ class SampleLoader:
         else:
             assert task_name == 'yzd_liveness' or task_name == 'yzd_reachability'
             sample_statistics['num_be(backward)'] = num_be
-        # print(f'line be is: {byte_str_be}; end_idx = {end_idx_be}')
         end_idx_pp, byte_str_pp = _get_a_line(star_idx=end_idx_be)
-        # print(f'line pp is: {byte_str_pp}; end_idx = {end_idx_pp}')
         _, _, num_pp = _parse_a_line(byte_str_pp)
         sample_statistics['num_pp'] = num_pp
         end_idx_ip, byte_str_ip = _get_a_line(star_idx=end_idx_pp)
-        # print(f'line ip is: {byte_str_ip}; end_idx = {end_idx_ip}')
         _, _, num_ip = _parse_a_line(byte_str_ip)
         sample_statistics['num_ip'] = num_ip
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
-        # print(f'line it is: {byte_str_it}; end_idx = {end_idx_it}')
         _, item_name, num_iteration = _parse_a_line(byte_str_it)
         sample_statistics[f'{item_name}_{task_name}'] = num_iteration
+        printed_trace_len = int(num_iteration)
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
-        # print(f'line be du: {byte_str_du}; end_idx = {end_idx_du}')
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
-        # print(f'line size is: {byte_str_edge_size}; end_idx = {end_idx_edge_size}')
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
-        return sample_statistics, edge_chunck, trace_chunck
-
-    def _load_dense_trace_from_bytes(self, task_name: Union[str, bytes], trace_bytes: bytes):
-        result_obj = ResultsEveryIteration()
-        result_obj.ParseFromString(trace_bytes)
-        num_pp = len(result_obj.program_points.value)
-        num_ip = len(result_obj.interested_points.value)
-        if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-            num_node = num_pp + num_ip
-        else:
-            assert num_pp == num_ip
-            num_node = num_pp
-        trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
-        trace_list = []
-        for trace_idx in range(trace_len):
-            trace_matrix = np.zeros(shape=(num_node, num_node))
-            trace_of_this_iteration = result_obj.results_every_iteration[trace_idx].result_map
-            # 要从这一个trace里转化出一个matrix来
-            assert len(trace_of_this_iteration) == num_pp
-            for source_node in trace_of_this_iteration.keys():
-                # target_node_list = list(trace_of_this_iteration[source_node].value)
-                target_node_list = trace_of_this_iteration[source_node].value
-                num_target_node = len(target_node_list)
-                if num_target_node == 0:
-                    continue
-                # 相应值填进trace_matrix里
-                trace_matrix[np.repeat(source_node, num_target_node), np.array(target_node_list)] = 1
-            trace_list.append(trace_matrix)
-        return trace_list
-
-    def _load_dense_edge_from_str(self, task_name: Union[str, bytes], edges_str):
-        edges_saved_matrix = np.fromstring(edges_str, sep=' ', dtype=int)
-        if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-            edges_saved_matrix = edges_saved_matrix.reshape((-1, 3))
-            # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
-            num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
-            num_node = num_pp + num_ip
-            print(f'num_pp = {num_pp}; num_ip = {num_ip}; total = {num_pp + num_ip}')
-            cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
-            gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
-            kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
-            cfg_edges = edges_saved_matrix[cfg_row_indices, :-1]
-            gen_edges = edges_saved_matrix[gen_row_indices, :-1]
-            kill_edges = edges_saved_matrix[kill_row_indices, :-1]
-            cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            gen_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            kill_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            # print(f'the shape of cfg_array is: {cfg_array.shape}; the shape of cfg_edges is: {cfg_edges.shape}')
-            cfg_array[cfg_edges[:, 0], cfg_edges[:, 1]] = 1
-            gen_array[gen_edges[:, 0], gen_edges[:, 1]] = 1
-            kill_array[kill_edges[:, 0], kill_edges[:, 1]] = 1
-            return [cfg_array, gen_array, kill_array]
-        else:
-            edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
-            num_node = edges_saved_matrix[0, 0]
-            cfg_source = edges_saved_matrix[1:, 0]
-            cfg_target = edges_saved_matrix[1:, 1]
-            cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            cfg_array[cfg_source, cfg_target] = 1
-            kill_array = np.identity(num_node)
-            return [cfg_array, kill_array]
+        return sample_statistics, printed_trace_len, edge_chunck, trace_chunck
 
     def _load_sparse_trace_from_bytes(self, task_name: Union[str, bytes],
                                       trace_bytes: bytes,
                                       sample_id: str,
-                                      selected_num_ip: int):
+                                      selected_num_ip: int,
+                                      start_trace_idx: int = 0):
         result_obj = ResultsEveryIteration()
         result_obj.ParseFromString(trace_bytes)
         num_pp = len(result_obj.program_points.value)
         if num_pp > self.max_num_pp:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(sample_id + '\n')
+                error_sample_writer.write(f'{sample_id}: {YZDExcpetion.TOO_MANY_PP_NODES}\n')
             raise YZDExcpetion(YZDExcpetion.TOO_MANY_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
+        if not (task_name == 'dfa_liveness' or task_name == b'dfa_liveness'):
+            assert num_pp == num_ip
         if num_ip < selected_num_ip:
             self.sample_path_processor.errored_sample_ids[sample_id] = 1
             with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(sample_id + '\n')
+                error_sample_writer.write(f'{sample_id}: {YZDExcpetion.TOO_FEW_IP_NODES}\n')
             raise YZDExcpetion(YZDExcpetion.TOO_FEW_IP_NODES, sample_id)
 
         selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
                                                                  selected_num_ip)))
-        if not (task_name == 'yzd_liveness' or task_name == b'yzd_liveness'):
-            assert num_pp == num_ip
-        # if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-        # num_node = num_pp + num_ip
-        # selected_ip_indices = selected_ip_indices_base + num_pp
-        # else:
-        #     assert num_pp == num_ip
-        # num_node = num_pp
-        # selected_ip_indices = selected_ip_indices_base
-        trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
+        # selected_ip_indices_base = np.array([2,3,4,5,57])
+        # print(
+        #     f'dfa_utils line 281, but for debug!!! selected_ip_base: {selected_ip_indices_base}; start_trace_idx = {start_trace_idx}')
+        full_trace_len = len(result_obj.results_every_iteration)  # this should be num_iteration+1
         trace_list = []
-        for trace_idx in range(trace_len):
-            trace_content_base = np.zeros(shape=(num_pp, num_ip))
-            trace_of_this_iteration = result_obj.results_every_iteration[trace_idx].result_map
-            # 要从这一个trace里转化出一个matrix来
+        cur_trace_idx = start_trace_idx
+        while cur_trace_idx < min(full_trace_len - 1, start_trace_idx + self.expected_trace_len):
+            # for trace_idx in range(trace_start_idx, trace_start_idx + self.expected_trace_len):
+            trace_content_base = np.zeros(shape=(num_ip, num_pp), dtype=int)
+            trace_of_this_iteration = result_obj.results_every_iteration[cur_trace_idx].result_map
+            cur_trace_idx += 1
+            # generate a matrix from the trace
             assert len(trace_of_this_iteration) == num_pp
-            for source_node in trace_of_this_iteration.keys():
-                # target_node_list = list(trace_of_this_iteration[source_node].value)
-                target_node_list = trace_of_this_iteration[source_node].value
-                num_target_node = len(target_node_list)
-                if num_target_node == 0:
+            for pp in trace_of_this_iteration.keys():
+                active_ip_list = trace_of_this_iteration[pp].value
+                num_active_ip_node = len(active_ip_list)
+                if num_active_ip_node == 0:
                     continue
-                # 相应值填进trace_matrix里
-                trace_content_base[np.repeat(source_node, num_target_node), np.array(target_node_list) - num_pp] = 1
-            trace_content_sparse = trace_content_base[np.arange(num_pp), selected_ip_indices_base]
-            # [num_pp, selected_num_ip]
-            trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
-            if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
+                # put corresponding value into trace_matrix
+                if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
+                    trace_content_base[np.array(active_ip_list) - num_pp, np.repeat(pp, num_active_ip_node)] = 1
+                else:
+                    trace_content_base[np.array(active_ip_list), np.repeat(pp, num_active_ip_node)] = 1
+            trace_content_sparse = trace_content_base[selected_ip_indices_base, :]
+            # [selected_num_ip, num_pp]
+            # trace_content_sparse = trace_content_sparse.transpose().reshape(-1, )  # [num_pp * selected_num_ip, ]
+            trace_content_sparse = trace_content_sparse.reshape(-1, )  # [num_pp * selected_num_ip, ]
+            if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
 
-                trace_idx_col_sparse = np.repeat(np.arange(num_pp, num_pp + selected_num_ip),
-                                                 [num_pp] * selected_num_ip)
+                trace_idx_source = np.repeat(np.arange(num_pp, num_pp + selected_num_ip),
+                                             [num_pp] * selected_num_ip)
                 # [num_pp * selected_num_ip, ]
             else:
-                trace_idx_col_sparse = np.repeat(selected_ip_indices_base,
-                                                 [num_pp] * selected_num_ip)
-            trace_idx_row_sparse = np.tile(np.arange(num_pp), selected_num_ip)
+                trace_idx_source = np.repeat(selected_ip_indices_base,
+                                             [num_pp] * selected_num_ip)
+            trace_idx_target = np.tile(np.arange(num_pp), selected_num_ip)
             # [num_pp * selected_num_ip, ]
-            trace_sparse_data = np.concatenate([np.expand_dims(trace_idx_row_sparse, -1),
-                                                np.expand_dims(trace_idx_col_sparse, -1),
-                                                np.expand_dims(trace_content_sparse, -1)],
-                                               axis=1)
-            trace_sparse = _ArraySparse(edges_with_optional_content=trace_sparse_data,
-                                        nb_nodes=(num_pp + selected_num_ip) if (
-                                                task_name == 'yzd_liveness' or
-                                                task_name == b'yzd_liveness') else num_pp,
-                                        nb_edges=num_pp * selected_num_ip)
-
+            trace_sparse = np.concatenate([np.expand_dims(trace_idx_source, -1),
+                                           np.expand_dims(trace_idx_target, -1),
+                                           np.expand_dims(trace_content_sparse, -1)],
+                                          axis=1)
+            # print(f'dfa_utils line 321, cur_trace_idx = {cur_trace_idx - 1}, the shape is: {trace_sparse.shape} ')
+            # print(trace_sparse)
             trace_list.append(trace_sparse)
+        # print(f'length of trace_list = {len(trace_list)}')
         return trace_list, selected_ip_indices_base, num_pp
-
-    def _get_node_type(self, task_name: Union[str, bytes],
-                       selected_ip_indices_base,
-                       num_pp):
-        assert selected_ip_indices_base.ndim == 1 and selected_ip_indices_base.shape[0] == self.selected_num_ip
-        if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
-            if_pp = np.concatenate([np.ones(shape=(num_pp,), dtype=int),
-                                    np.zeros(shape=(self.selected_num_ip,), dtype=int)],
-                                   axis=0)
-            if_ip = np.concatenate([np.zeros(shape=(num_pp,), dtype=int),
-                                    np.ones(shape=(self.selected_num_ip,), dtype=int)],
-                                   axis=0)
-        else:
-            if_pp = np.ones(shape=(num_pp,), dtype=int)
-            if_ip = np.zeros_like(if_pp)
-            if_ip[selected_ip_indices_base] = 1
-        return if_pp, if_ip
 
     def _load_sparse_edge_from_str(self, task_name: Union[str, bytes],
                                    edges_str,
                                    selected_ip_indices_base: np.ndarray):
         edges_saved_matrix = np.fromstring(edges_str, sep=' ', dtype=int)
         assert selected_ip_indices_base.ndim == 1 and selected_ip_indices_base.shape[0] == self.selected_num_ip
-        if task_name == 'yzd_liveness' or task_name == b'yzd_liveness':
+        if task_name == 'dfa_liveness' or task_name == b'dfa_liveness':
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 3))
             # print(f'the shape of edges_saved_matrix is: {edges_saved_matrix.shape}')
             num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
-            # num_node = num_pp + num_ip
-            print(f'num_pp = {num_pp}; num_ip = {num_ip}; total = {num_pp + num_ip}')
             cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
             gen_row_indices = np.where(edges_saved_matrix[:, -1] == 1)[0]
             kill_row_indices = np.where(edges_saved_matrix[:, -1] == 2)[0]
-            cfg_sparse = edges_saved_matrix[cfg_row_indices, :-1]
-            gen_edges = edges_saved_matrix[gen_row_indices, :-1]
-            kill_edges = edges_saved_matrix[kill_row_indices, :-1]
+            cfg_edges_backward = edges_saved_matrix[cfg_row_indices, :-1]
+            cfg_edges_forward = cfg_edges_backward[:, [1, 0]]
+            gen_edges = edges_saved_matrix[gen_row_indices, :-1][:, [1, 0]]
+            kill_edges = edges_saved_matrix[kill_row_indices, :-1][:, [1, 0]]
 
-            # cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            gen_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            kill_array_dense = np.zeros(shape=(num_pp, num_ip), dtype=int)
-            # print(f'the shape of cfg_array is: {cfg_array.shape}; the shape of cfg_edges is: {cfg_edges.shape}')
-            # cfg_array[cfg_edges[:, 0], cfg_edges[:, 1]] = 1
-            gen_array_dense[gen_edges[:, 0], gen_edges[:, 1] - num_pp] = 1
-            kill_array_dense[kill_edges[:, 0], kill_edges[:, 1] - num_pp] = 1
+            gen_array_dense = np.zeros(shape=(num_ip, num_pp), dtype=int)
+            kill_array_dense = np.zeros(shape=(num_ip, num_pp), dtype=int)
+            gen_array_dense[gen_edges[:, 0] - num_pp, gen_edges[:, 1]] = 1
+            kill_array_dense[kill_edges[:, 0] - num_pp, kill_edges[:, 1]] = 1
 
-            gen_content_sparse = gen_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
-            # [num_pp * selected_num_ip, ]
-            kill_content_sparse = kill_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
-            # [num_pp * selected_num_ip, ]
-            gen_kill_idx_row_sparse = np.tile(np.arange(num_pp), self.selected_num_ip)
-            # [num_pp * selected_num_ip, ]
-            gen_kill_idx_col_sparse = np.repeat(np.arange(num_pp, num_pp + self.selected_num_ip),
-                                                [num_pp] * self.selected_num_ip)
-            # [num_pp * selected_num_ip, ]
-            gen_sparse = np.concatenate([np.expand_dims(gen_kill_idx_row_sparse, -1),
-                                         np.expand_dims(gen_kill_idx_col_sparse, -1),
-                                         np.expand_dims(gen_content_sparse, -1)],
-                                        axis=1)
-            kill_sparse = np.concatenate([np.expand_dims(gen_kill_idx_row_sparse, -1),
-                                          np.expand_dims(gen_kill_idx_col_sparse, -1),
-                                          np.expand_dims(kill_content_sparse, -1)],
-                                         axis=1)
-
-            cfg_sparse_array = _ArraySparse(edges_with_optional_content=cfg_sparse,
-                                            nb_nodes=num_pp + self.selected_num_ip,
-                                            nb_edges=cfg_sparse.shape[0])
-            gen_sparse_array = _ArraySparse(edges_with_optional_content=gen_sparse,
-                                            nb_nodes=num_pp + self.selected_num_ip,
-                                            nb_edges=num_pp * self.selected_num_ip)
-            kill_sparse_array = _ArraySparse(edges_with_optional_content=kill_sparse,
-                                             nb_nodes=num_pp + self.selected_num_ip,
-                                             nb_edges=num_pp * self.selected_num_ip)
-            return [cfg_sparse_array, gen_sparse_array, kill_sparse_array]
+            gen_vectors = gen_array_dense[selected_ip_indices_base, :].transpose()
+            # [num_pp, selected_num_ip, ]
+            kill_vectors = kill_array_dense[selected_ip_indices_base, :].transpose()
+            # [num_pp, selected_num_ip, ]
         else:
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
             num_pp = edges_saved_matrix[0, 0]
-            cfg_sparse = edges_saved_matrix[1:, :]
-            # cfg_source = edges_saved_matrix[1:, 0]
-            # cfg_target = edges_saved_matrix[1:, 1]
-            # cfg_array = np.zeros(shape=(num_node, num_node), dtype=int)
-            # cfg_array[cfg_source, cfg_target] = 1
+            if task_name == 'dfa_reachability' or task_name == b'dfa_reachability':
+                cfg_edges_backward = edges_saved_matrix[1:, :]
+                cfg_edges_forward = cfg_edges_backward[:, [1, 0]]
+            else:
+                assert task_name == 'dfa_dominance' or task_name == b'dfa_dominance'
+                cfg_edges_forward = edges_saved_matrix[1:, :]
+                cfg_edges_backward = cfg_edges_forward[:, [1, 0]]
             gen_array_dense = np.identity(num_pp, dtype=int)
-            gen_content_sparse = gen_array_dense[:, selected_ip_indices_base].transpose().reshape(-1, )
-            # [num_pp * selected_num_ip, ]
-            gen_idx_row_sparse = np.tile(np.arange(num_pp), self.selected_num_ip)
-            # [num_pp * selected_num_ip, ]
-            gen_idx_col_sparse = np.repeat(selected_ip_indices_base,
-                                           [num_pp] * self.selected_num_ip)
-            gen_sparse = np.concatenate([np.expand_dims(gen_idx_row_sparse, -1),
-                                         np.expand_dims(gen_idx_col_sparse, -1),
-                                         np.expand_dims(gen_content_sparse, -1)],
-                                        axis=1)
+            gen_vectors = gen_array_dense[selected_ip_indices_base, :].transpose()
+            # [num_pp, selected_num_ip]
+            kill_vectors = np.zeros(num_pp, self.selected_num_ip)
+            # [num_pp, selected_num_ip]
+        num_cfg_edges = cfg_edges_forward.shape[0]
+        cfg_edges_forward = np.concatenate([cfg_edges_forward,
+                                            np.ones((num_cfg_edges, 1))],
+                                           axis=1)
+        # [num_cfg, 3]
+        cfg_edges_backward = np.concatenate([cfg_edges_backward,
+                                             np.zeros((num_cfg_edges, 1))],
+                                            axis=1)
+        # [num_cfg, 3]
+        cfg_edges = np.concatenate([cfg_edges_forward, cfg_edges_backward], axis=0)
+        return [cfg_edges, gen_vectors, kill_vectors]
 
-            cfg_sparse_array = _ArraySparse(edges_with_optional_content=cfg_sparse,
-                                            nb_nodes=num_pp,
-                                            nb_edges=cfg_sparse.shape[0])
-            gen_sparse_array = _ArraySparse(edges_with_optional_content=gen_sparse,
-                                            nb_nodes=num_pp,
-                                            nb_edges=num_pp * self.selected_num_ip)
-            return [cfg_sparse_array, gen_sparse_array]
+
+def _get_analyze_task_name(task_name: str):
+    if task_name == 'dfa_liveness':
+        return 'yzd_liveness'
+    elif task_name == 'dfa_reachability':
+        return 'yzd_reachability'
+    elif task_name == 'dfa_dominance':
+        return 'yzd_dominance'
+    return task_name
 
 
 def _get_activation(activation_str):
@@ -491,15 +387,33 @@ def _get_activation(activation_str):
 def parse_params(params_filepath: str):
     with open(params_filepath) as json_loader:
         params_dict = json.load(json_loader)
+
+    train_sample_id_list = []
+    with open(params_dict['dfa_sampler']['train_sample_id_savepath']) as train_sample_reader:
+        for line in train_sample_reader.readlines():
+            train_sample_id_list.append(line.strip())
+    params_dict['dfa_sampler']['train_sample_id_list'] = train_sample_id_list
+    del params_dict['dfa_sampler']['train_sample_id_savepath']
+    vali_sample_id_list = []
+    with open(params_dict['dfa_sampler']['vali_sample_id_savepath']) as vali_sample_reader:
+        for line in vali_sample_reader.readlines():
+            vali_sample_id_list.append(line.strip())
+    params_dict['dfa_sampler']['vali_sample_id_list'] = vali_sample_id_list
+    del params_dict['dfa_sampler']['vali_sample_id_savepath']
+    test_sample_id_list = []
+    with open(params_dict['dfa_sampler']['test_sample_id_savepath']) as test_sample_reader:
+        for line in test_sample_reader.readlines():
+            test_sample_id_list.append(line.strip())
+    params_dict['dfa_sampler']['test_sample_id_list'] = test_sample_id_list
+    del params_dict['dfa_sampler']['test_sample_id_savepath']
+
+    params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
     params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
     del params_dict['processor']['activation_name']
-
-    sample_id_list = []
-    with open(params_dict['dfa_sampler']['sample_id_savepath']) as sample_reader:
-        for line in sample_reader.readlines():
-            sample_id_list.append(line.strip())
-    params_dict['dfa_sampler']['sample_id_list'] = sample_id_list
-    del params_dict['dfa_sampler']['sample_id_savepath']
-
-    params_dict['dfa_net']['spec'] = yzd_specs.DFASPECS[params_dict['task']['task_name']]
     return params_dict
+
+
+def dim_expand_to(x, y):
+    while len(y.shape) > len(x.shape):
+        x = jnp.expand_dims(x, -1)
+    return x

@@ -104,7 +104,7 @@ class SampleLoader:
                  # max_iteration: int,
                  expected_trace_len: int,
                  max_num_pp: int,
-                 gkt_edges_rate: int,
+                 cfg_edges_rate: int,
                  selected_num_ip: int,
                  if_sync: bool,
                  if_idx_reorganized: bool = True,
@@ -113,7 +113,7 @@ class SampleLoader:
         self.sample_path_processor = sample_path_processor
         self.expected_trace_len = expected_trace_len
         self.expected_hint_len = self.expected_trace_len - 1
-        self.gkt_edges_rate = gkt_edges_rate
+        self.cfg_edges_rate = cfg_edges_rate
         self.max_num_pp = max_num_pp
         self.if_sync = if_sync
         if self.if_sync:

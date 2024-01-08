@@ -1,113 +1,118 @@
 from clrs._src import samplers
 from clrs._src import algorithms
-from clrs._src import yzd_utils
-from clrs._src import specs, yzd_specs
-from clrs._src import yzd_probing
-from typing import List, Optional, Tuple, Iterable
+from clrs._src import dfa_utils
+from clrs._src import specs, dfa_specs
+from clrs._src import probing
+from typing import List, Optional, Tuple
 from programl.proto import *
 import random
 import numpy as np
 import jax
 import collections
 
-Spec = yzd_specs.Spec
-# Features = collections.namedtuple('Features', ['dense_inputs',
-#                                                'sparse_inputs',
-#                                                'dense_hints',
-#                                                'sparse_hints',
-#                                                'lengths'])
-Features = collections.namedtuple('Features', ['input_NODE_dp_list',
-                                               'input_EDGE_dp_list',
+Spec = specs.Spec
+Features = collections.namedtuple('Features', ['input_dp_list',
                                                'trace_h',
-                                               'hint_len'])
+                                               'padded_edge_indices_dict',
+                                               'mask_dict'])
 
 Feedback = collections.namedtuple('Feedback', ['features', 'trace_o'])
-# DenseFeatures = samplers.Features
-# SparseFeatures = collections.namedtuple('SparseFeatures', ['sparse_inputs', 'sparse_hints', 'sparse_lengths'])
-# YZDFeedback = collections.namedtuple('YZDFeedback',
-#                                      ['dense_features',
-#                                       # 'dense_outputs',
-#                                       'sparse_features',
-#                                       'sparse_outputs'])
 
-_ArraySparse = yzd_probing.ArraySparse
-_ArrayDense = yzd_probing.ArrayDense
-_Array = yzd_probing.Array
-_DataPoint = yzd_probing.DataPoint
+_Array = np.ndarray
+_DataPoint = probing.DataPoint
 Trajectory = List[_DataPoint]
 Trajectories = List[Trajectory]
 
 
-class YZDSampler(samplers.Sampler):
+class DFASampler(samplers.Sampler):
 
     # 要设定max_step的
     def __init__(self,
                  task_name: str,
                  sample_id_list: List[str],
                  seed: int,
-                 sample_loader: yzd_utils.SampleLoader
+                 sample_loader: dfa_utils.SampleLoader
                  ):
-        if not task_name in ['yzd_liveness', 'yzd_dominance', 'yzd_reachability']:
+        if not task_name in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability', 'dfa']:
             raise NotImplementedError(f'No implementation of algorithm {task_name}.')
         self.sample_id_list = sample_id_list
         self.task_name = task_name
         self.sample_loader = sample_loader
-        self.max_steps = self.sample_loader.max_iteration - 1
+        self.expected_hint_len = self.sample_loader.expected_hint_len
         self.max_num_pp = self.sample_loader.max_num_pp
-
+        random.seed(seed)
+        self._iter_sample_id_list = iter(self.sample_id_list)
         samplers.Sampler.__init__(self,
                                   algorithm=getattr(algorithms, task_name),
-                                  spec=yzd_specs.YZDSPECS[task_name],
+                                  spec=dfa_specs.DFASPECS[task_name],
                                   num_samples=-1,  #
                                   seed=seed,
                                   if_estimate_max_step=False)
 
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
-        # print(f'sample_id_list = {self.sample_id_list}')
         sample_id = random.choice(seq=self.sample_id_list)
-        # print(f'randomly selected sample_id = {sample_id}')
         return sample_id
 
     def _make_batch(self, num_samples: int,
                     spec: Spec, min_length: int,
-                    algorithm: samplers.Algorithm, *args, **kwargs):
+                    algorithm: samplers.Algorithm,
+                    if_vali_or_test: bool = False,
+                    *args, **kwargs):
         """Generate a batch of data."""
-        input_NODE_dp_list_list = []  # pos, if_pp, if_ip
-        input_EDGE_dp_list_list = []  # cfg, gen, kill, trace_i
-        trace_o_list_list = []
-        trace_h_list = []
+        inp_dp_list_list = []  # pos, if_pp, if_ip, cfg, gen, (kill,) trace_i
+        outp_dp_list_list = []  # trace_o
+        hint_dp_list_list = []  # trace_h
+        edge_indices_dict_list = []
+        mask_dict_list = []
 
         num_created_samples = 0
         while num_created_samples < num_samples:
-            sample_id = self._sample_data(*args, **kwargs)
+            if if_vali_or_test:
+                sample_id = next(self._iter_sample_id_list)
+            else:
+                sample_id = self._sample_data(*args, **kwargs)
+            # sample_id = 'poj104_103.12489.6'
+            print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
-                _, probes = algorithm(self.sample_loader, sample_id)
-            except yzd_utils.YZDExcpetion:
-                continue
+                edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
+            except probing.ProbeError as err:
+                if isinstance(err, dfa_utils.YZDExcpetion):
+                    print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
+                    continue
+                else:
+                    print(err)
+                    return
+            print(f'{sample_id} succeed~~~ (sampler line 92)')
             num_created_samples += 1
-            inp_NODE_dp_list, inp_EDGE_dp_list, trace_o_list, trace_h = yzd_probing.yzd_split_stages(probes, spec)
-            input_NODE_dp_list_list.append(inp_NODE_dp_list)
-            # outputs.append(outp)  # this should be empty
-            # hints.append(hint)
-            input_EDGE_dp_list_list.append(inp_EDGE_dp_list)
-            trace_o_list_list.append(trace_o_list)
-            trace_h_list.append(trace_h)
+            edge_indices_dict_list.append(edge_indices_dict)
+            mask_dict_list.append(mask_dict)
+            inp_dp_list, outp_dp_list, hint_dp_list = probing.split_stages(probes, spec)
+            inp_dp_list_list.append(inp_dp_list)
+            outp_dp_list_list.append(outp_dp_list)
+            hint_dp_list_list.append(hint_dp_list)
 
         # Batch and pad trajectories to max(T).
-        batched_input_NODE_dp_list = _batch_NODE_input(input_NODE_dp_list_list)
-        batched_input_EDGE_dp_list = _batch_EDGE_io(input_EDGE_dp_list_list)
-        batched_trace_o = _batch_EDGE_io(trace_o_list_list)[0]
-        batched_trace_h, hint_len = _batch_trace_h(trace_h_traj=trace_h_list,
-                                                   batched_trace_o=batched_trace_o,
-                                                   min_steps=min_length)
-        # outputs = samplers._batch_io(outputs)
-        # hints, lengths = samplers._batch_hints(hints, min_length)
-        # sparse_inputs = _batch_io_sparse(sparse_inputs)
-        # sparse_outputs = _batch_io_sparse(sparse_outputs)
-        # sparse_hints, sparse_lengths = _batch_hints_sparse(sparse_hints, min_length)
-        return batched_input_NODE_dp_list, batched_input_EDGE_dp_list, batched_trace_o, batched_trace_h, hint_len
+        batched_inp_dp_list = _batch_ioh(inp_dp_list_list)
+        batched_trace_o = _batch_ioh(outp_dp_list_list)[0]
+        batched_trace_h = _batch_ioh(hint_dp_list_list)[0]
+        batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x), *edge_indices_dict_list)
+        batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(x), *mask_dict_list)
+        # print('dfa_sampler line 94')    # checked
+        # print(f'len of batched_inp_dp_list is: {len(batched_inp_dp_list)}:')
+        # for inp_dp in batched_inp_dp_list:
+        #     print(f'{inp_dp.name}: {inp_dp.data.shape}')
+        # print(f'the shape of batched_trace_o: {batched_trace_o.data.shape}')    # [B, N]
+        # print(f'the shape of batched_trace_h: {batched_trace_h.data.shape}')    # [T, B, H]
+        # print('in batched_edge_indices_dict:')
+        # for key, value in batched_edge_indices_dict.items():
+        #     print(f'{key} shape: {value.shape}')    # [B, E, 2]
+        # print('in batched_mask_dict:')
+        # for key, value in batched_mask_dict.items():
+        #     print(f'{key}: {value}')
+        return batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
 
-    def next(self, batch_size: Optional[int] = None) -> Feedback:
+    def next(self, batch_size: Optional[int] = None,
+             if_vali_or_test: bool = False) -> Feedback:
         """Subsamples trajectories from the pre-generated dataset.
 
         Args:
@@ -119,145 +124,68 @@ class YZDSampler(samplers.Sampler):
         if not batch_size:
             # YZDTODO should raise an error
             batch_size = 1
-        batched_input_NODE_dp_list, batched_input_EDGE_dp_list, batched_trace_o, batched_trace_h, hint_len = self._make_batch(
+        # print(f'sampler line 110, batch_size = {batch_size}')
+        tmp = self._make_batch(
             num_samples=batch_size,
             spec=self._spec,
-            min_length=self.max_steps,
-            algorithm=self._algorithm)
+            min_length=self.expected_hint_len,
+            algorithm=self._algorithm,
+            if_vali_or_test=if_vali_or_test)
+        # print(f'sampler line 116, the type of tmp is: {type(tmp)}; its len is: {len(tmp)}')
+        batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
         # assert np.array_equal(lengths, sparse_lengths)
-        assert len(batched_input_NODE_dp_list) == 3 and len(
-            batched_input_EDGE_dp_list) == 3 if self.task_name == 'yzd_liveness' else 2
-
-        # 讲道理在我的情形下这条warning是不应该出现的
-        # if hints[0].data.shape[0] > self.max_steps:
-        #     logging.warning('Increasing hint lengh from %i to %i',
-        #                     self.max_steps, hints[0].data.shape[0])
-        #     self.max_steps = hints[0].data.shape[0]
-
-        return Feedback(features=Features(input_NODE_dp_list=batched_input_NODE_dp_list,
-                                          input_EDGE_dp_list=batched_input_EDGE_dp_list,
+        assert len(batched_inp_dp_list) == 6 if self.task_name == 'dfa_liveness' else 5
+        print('~~~~~~~~~~ one batch has done! (sampler line 130) ~~~~~~~~~~')
+        return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,
-                                          hint_len=hint_len),
+                                          padded_edge_indices_dict=batched_edge_indices_dict,
+                                          mask_dict=batched_mask_dict),
                         trace_o=batched_trace_o)
 
 
-def build_yzd_sampler(task_name: str,
+def build_dfa_sampler(task_name: str,
                       sample_id_list: List[str],
                       seed: int,
-                      sample_loader: yzd_utils.SampleLoader
-                      ) -> Tuple[YZDSampler, Spec]:
+                      sample_loader: dfa_utils.SampleLoader
+                      ) -> Tuple[DFASampler, Spec]:
     """Builds a sampler. See `Sampler` documentation."""
 
-    if task_name not in ['yzd_liveness', 'yzd_dominance', 'yzd_reachability']:
+    if task_name not in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability']:
         raise NotImplementedError(f'No implementation of algorithm {task_name}.')
-    spec = yzd_specs.YZDSPECS[task_name]
+    spec = dfa_specs.DFASPECS[task_name]
 
-    sampler = YZDSampler(task_name=task_name,
+    sampler = DFASampler(task_name=task_name,
                          sample_id_list=sample_id_list,
                          seed=seed,
-                         sample_loader=sample_loader,
-                         )
+                         sample_loader=sample_loader)
     return sampler, spec
 
 
-def _batch_NODE_input(input_NODE_dp_list_list: Trajectories):
-    assert input_NODE_dp_list_list
-    for input_NODE_dp_list in input_NODE_dp_list_list:
-        for i, input_NODE_dp in enumerate(input_NODE_dp_list):
-            assert input_NODE_dp.name == input_NODE_dp_list_list[0][i].name
-    return jax.tree_util.tree_map(lambda *x: np.concatenate(x), *input_NODE_dp_list_list)
-
-def _batch_EDGE_io(io_EDGE_dp_list_list: Trajectories):
-    assert io_EDGE_dp_list_list
-    for input_EDGE_dp_list in io_EDGE_dp_list_list:
-        for i, input_EDGE_dp in enumerate(input_EDGE_dp_list):
-            # assert isinstance(dp.data, _ArraySparse)
-            assert io_EDGE_dp_list_list[0][i].name == input_EDGE_dp.name
-    return jax.tree_util.tree_map(lambda *x: _batch_EDGE_one_probe(x),
-                                  *io_EDGE_dp_list_list)
-
-
-def _batch_EDGE_one_probe(EDGE_data_list):
-    '''
-    EDGE_dp_list: Iterable[_ArraySparse]
-    '''
-    assert EDGE_data_list
-    batch_size = len(EDGE_data_list)
-    edges_list = []
-    nb_nodes_list_with_0 = [0]
-    nb_edges_list = []
-    for idx, dp_data in enumerate(EDGE_data_list):
-        nb_nodes_list_with_0.append(dp_data.nb_nodes)
-        nb_edges_list.append(dp_data.nb_edges)
-        edges_list.append(dp_data.edge_indices_with_optional_content)
-    cumsum = np.cumsum(nb_nodes_list_with_0)
-    edges_batched = np.concatenate(edges_list, axis=0)
-    nb_nodes_batched = np.array(nb_nodes_list_with_0[1:])
-    nb_edges_batched = np.array(nb_edges_list)
-    indices = np.repeat(np.arange(batch_size), nb_edges_batched)
-    scattered = cumsum[indices]
-    edges_batched[:, :2] += np.expand_dims(scattered, axis=1)
-    return _ArraySparse(edges_with_optional_content=edges_batched,
-                        nb_nodes=nb_nodes_batched,
-                        nb_edges=nb_edges_batched)
-
-
-def _batch_trace_h(trace_h_traj: Trajectory,
-                   batched_trace_o: _DataPoint,
-                   min_steps: int):
-    # batch trace_h_sparce
-    assert trace_h_traj
-    batch_size = len(trace_h_traj)
-    padded_trace_h_edges = np.repeat(a=np.expand_dims(batched_trace_o.data.edges_with_optional_content,
-                                                      axis=0),
-                                     repeats=min_steps,
-                                     axis=0)  # [min_steps, nb_edges_entire_batch, 3]
-
-    start_nb_edges = 0
-    accum_nb_nodes = 0
-    hint_len = np.zeros(batch_size, dtype=int)
-    for dp_idx, dp in enumerate(trace_h_traj):
-        assert dp.name == 'trace_h_sparse'
-        dp_hint_len, dp_nb_edges, = dp.data.edges_with_optional_content.shape[:2]
-        assert dp_nb_edges == dp.data.nb_edges
-        tmp = accum_nb_nodes * np.ones_like(dp.data.edges_with_optional_content)
-        tmp[..., -1] = 0
-        padded_trace_h_edges[:dp_hint_len, start_nb_edges:start_nb_edges + dp_nb_edges,
-        :] = dp.data.edges_with_optional_content + tmp
-        start_nb_edges += dp_nb_edges
-        assert batched_trace_o.data.nb_nodes[dp_idx] == dp.data.nb_nodes
-        assert batched_trace_o.data.nb_edges[dp_idx] == dp_nb_edges
-        accum_nb_nodes += dp.data.nb_nodes
-        hint_len[dp_idx] = dp_hint_len
-
-    padded_trace_h = _ArraySparse(edges_with_optional_content=padded_trace_h_edges,
-                                  nb_nodes=batched_trace_o.data.nb_nodes,
-                                  nb_edges=batched_trace_o.data.nb_edges)
-    return _DataPoint(name='trace_h_sparse',
-                      location=specs.Location.EDGE,
-                      type_=specs.Type.MASK,
-                      data=padded_trace_h), \
-           hint_len
-
-def _batch_NODE_input_and_padding(input_NODE_dp_list_list: Trajectories,
-                                  padded_nb_nodes: int):
-    #   pos, if_ip, if_pp
-    batch_size = len(input_NODE_dp_list_list)
-    B_N = (batch_size, padded_nb_nodes)
-    padded_batched_NODE_dp_list = jax.tree_util.tree_map(lambda x: np.zeros(B_N + x.shape[1:]),
-                                                         input_NODE_dp_list_list[0])
-    nb_nodes = np.zeros(batch_size)
-    for sample_idx, input_NODE_dp_list_one_sample in enumerate(input_NODE_dp_list_list):
-        for dp_idx, dp in enumerate(input_NODE_dp_list_one_sample):
-            assert dp.name == padded_batched_NODE_dp_list[dp_idx].name
-            dp_nb_nodes = dp.data.shape[0]
-            padded_batched_NODE_dp_list[sample_idx].data[sample_idx, :dp_nb_nodes] = dp.data
-            if dp_idx > 0:
-                assert nb_nodes[dp_idx] == dp_nb_nodes
+def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
+    assert ioh_dp_list_list
+    for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
+        for dp_idx, dp in enumerate(dp_list_one_sample):
+            if dp.name == 'trace_h':
+                assert dp.data.shape[1] == 1
+                concat_dim = 1
             else:
-                nb_nodes[dp_idx] = dp_nb_nodes
-    return padded_batched_NODE_dp_list, nb_nodes
+                assert dp.data.shape[0] == 1
+                concat_dim = 0
+    return jax.tree_util.tree_map(lambda *x: np.concatenate(x,
+                                                            axis=concat_dim),
+                                  *ioh_dp_list_list)
 
-# def _batch_EDGE_input_and_padding(input_EDGE_dp_list_list: Trajectories,
-#                                   padded_nb_nodes: int,
-#                                   padded_nb_edges: int):
+
+def FeedbackGenerator(dfa_sampler: DFASampler,
+                      batch_size: int,
+                      if_vali_or_test: bool = False):
+    while True:
+        yield dfa_sampler.next(batch_size=batch_size,
+                               if_vali_or_test=if_vali_or_test)
+
+
+# def FeedbackGenerator_limited(dfa_sampler: DFASampler,
+#                               batch_size: int):
+#     while True:
+#         yield dfa_sampler.next(batch_size=batch_size,
+#                                if_limit=True)

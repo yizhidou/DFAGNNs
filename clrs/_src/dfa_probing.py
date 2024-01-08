@@ -52,7 +52,7 @@ def dfa_finalize(probes: _ProbesDict,
                     # print(
                     #     f'dfa_probing line 52, stacked_trace_h: {stacked_trace_h.shape}; trace_h_padded: {trace_h_padded.shape}')
                 else:
-                    len(probes[stage][loc][name]['data']) == 1
+                    assert len(probes[stage][loc][name]['data']) == 1
                     old_data = probes[stage][loc][name]['data'][0]
                     if name in ['pos', 'if_pp', 'if_ip']:
                         if nb_nodes is None:

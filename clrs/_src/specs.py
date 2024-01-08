@@ -55,6 +55,7 @@ class Type:
   SHOULD_BE_PERMUTATION = 'should_be_permutation'
   PERMUTATION_POINTER = 'permutation_pointer'
   SOFT_POINTER = 'soft_pointer'
+  BINARY_MATRIX = 'binary_matrix'   # added by yzd
 
 
 class OutputClass:

@@ -33,7 +33,7 @@ class DFASampler(samplers.Sampler):
                  seed: int,
                  sample_loader: dfa_utils.SampleLoader
                  ):
-        if not task_name in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability']:
+        if not task_name in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability', 'dfa']:
             raise NotImplementedError(f'No implementation of algorithm {task_name}.')
         self.sample_id_list = sample_id_list
         self.task_name = task_name

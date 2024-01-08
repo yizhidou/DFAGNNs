@@ -177,7 +177,8 @@ class GATSparse(DFAProcessor):
                                             num_segments=nb_cfg_edges_padded)  # [B, E_cfg, nb_heads]
 
         cfg_coefs = _cfg_unsorted_segment_softmax_batched(logits=jax.nn.leaky_relu(cfg_logits),
-                                                          segment_ids=cfg_row_indices)
+                                                          segment_ids=cfg_source_indices)
+        # [B, E_cfg, nb_heads]
         cfg_values = m(cfg_z)  # [B, N, hidden_dim]
         # print(f'dfa_processor line 130, cfg_values: {cfg_values.shape}; cfg_coefs: {cfg_coefs.shape}')  # checked
         cfg_values = jnp.reshape(
@@ -185,7 +186,7 @@ class GATSparse(DFAProcessor):
             cfg_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 134, cfg_values: {cfg_values.shape}')    # checked
         cfg_values_source = jnp.take_along_axis(arr=cfg_values,
-                                                indices=dfa_utils.dim_expand_to(cfg_col_indices, cfg_values),
+                                                indices=dfa_utils.dim_expand_to(cfg_source_indices, cfg_values),
                                                 axis=1)  # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 139, cfg_values_source: {cfg_values_source.shape}; cfg_coefs: {cfg_coefs.shape}')    # checked
         cfg_hidden = jnp.expand_dims(cfg_coefs,
@@ -203,7 +204,7 @@ class GATSparse(DFAProcessor):
                                        num_segments=nb_nodes_padded)
 
         cfg_hidden = _segment_sum_batched(data=cfg_hidden,
-                                          segment_ids=cfg_row_indices)  # [B, N, nb_heads, hidden_dim/nb_heads]
+                                          segment_ids=cfg_target_indices)  # [B, N, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 155, shape of cfg_hidden is: {cfg_hidden.shape}')    # checked
         cfg_hidden = jnp.reshape(cfg_hidden, cfg_hidden.shape[:-2] + (self.out_size,))  # [B, N, hidden_dim]
         # print(f'dfa_processor line 145, shape of cfg_hidden is: {cfg_hidden.shape}')    # checked
@@ -226,11 +227,11 @@ class GATSparse(DFAProcessor):
         gkt_att_e = a_e(gkt_edge_fts)  # [B, E_gkt, nb_heads]
         gkt_logits = (
                 jnp.take_along_axis(arr=gkt_att_1,
-                                    indices=dfa_utils.dim_expand_to(gkt_row_indices, gkt_att_1),
+                                    indices=dfa_utils.dim_expand_to(gkt_source_indices, gkt_att_1),
                                     axis=1)
                 +  # + [B, E_gkt, nb_heads]
                 jnp.take_along_axis(arr=gkt_att_2,
-                                    indices=dfa_utils.dim_expand_to(gkt_col_indices, gkt_att_2),
+                                    indices=dfa_utils.dim_expand_to(gkt_target_indices, gkt_att_2),
                                     axis=1)
                 +  # + [B, E_gkt, nb_heads]
                 gkt_att_e  # + [B, E_gkt, nb_heads]
@@ -243,7 +244,7 @@ class GATSparse(DFAProcessor):
                                             num_segments=nb_gkt_edges_padded)
 
         gkt_coefs = _gkt_unsorted_segment_softmax_batched(logits=jax.nn.leaky_relu(gkt_logits),
-                                                          segment_ids=gkt_row_indices)  # [B, E_gkt, nb_heads]
+                                                          segment_ids=gkt_source_indices)  # [B, E_gkt, nb_heads]
 
         gkt_values = m(gkt_z)  # [B, N, hidden_dim]
         # TODO(YZD)这里也跟前面的cfg_z共享了m，不确定是否合理
@@ -251,13 +252,13 @@ class GATSparse(DFAProcessor):
             gkt_values,
             gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         gkt_values_source = jnp.take_along_axis(arr=gkt_values,
-                                                indices=dfa_utils.dim_expand_to(gkt_col_indices, gkt_values),
+                                                indices=dfa_utils.dim_expand_to(gkt_source_indices, gkt_values),
                                                 axis=1)  # [B, E_gkt, nb_heads, hidden_dim/nb_heads]
 
         ret = jnp.expand_dims(gkt_coefs, axis=-1) * gkt_values_source
         # [B, E_gkt, nb_heads, 1] * [B, E_gkt, nb_heads, hidden_dim/nb_heads] = [B, E_gkt, nb_heads, hidden_dim/nb_heads]
         ret = _segment_sum_batched(data=ret,
-                                   segment_ids=gkt_row_indices)  # [B, N, nb_heads, hidden_dim/nb_heads]
+                                   segment_ids=gkt_target_indices)  # [B, N, nb_heads, hidden_dim/nb_heads]
         ret = jnp.reshape(ret, ret.shape[:-2] + (self.out_size,))  # [B, N, hidden_dim]
 
         if self.residual:
