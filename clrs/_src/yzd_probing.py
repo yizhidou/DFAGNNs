@@ -73,8 +73,8 @@ def dfa_finalize(probes: _ProbesDict,
                                                                            specs.OutputClass.MASKED * np.ones(
                                                                                (expected_nb_nodes - nb_nodes,
                                                                                 old_data.shape[1]))],
-                                                                          axis=0)
-                        # [n, nb_ip] -> [N, nb_ip]
+                                                                          axis=0).reshape((-1,))
+                        # [n, nb_ip] -> [N, nb_ip] -> [N*nb_ip, ]
 
     padded_trace_o = probes[_Stage.OUTPUT][_Location.EDGE]['trace_o']['data']
     # [N, nb_ip]
@@ -83,8 +83,8 @@ def dfa_finalize(probes: _ProbesDict,
                                      repeats=expected_hint_len - hint_len,
                                      axis=0)
         # [T-t, N, nb_ip]
-        trace_h_padded = np.concatenate([trace_h_padded, repeated_trace_o], axis=0)
-        # [T, N, nb_ip]
+        trace_h_padded = np.concatenate([trace_h_padded, repeated_trace_o], axis=0).reshape((expected_hint_len, -1,))
+        # [T, N, nb_ip] -> [T, N*nb_ip]
     probes[_Stage.HINT][_Location.EDGE]['trace_h']['data'] = trace_h_padded
     # tmp_data_trace_h = probes[_Stage.HINT][_Location.EDGE]['trace_h']['data']
     # print(f'dfa_probing line 113, trace_h: {tmp_data_trace_h.shape}')

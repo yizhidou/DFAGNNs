@@ -426,8 +426,8 @@ class DFANet(nets.Net):
             trace_h_i: probing.DataPoint,
             hidden: _chex_Array,
             batch_size: int,
-            nb_nodes_padded: int,
-            nb_gkt_edges_padded: int,
+            nb_bits_padded: int,
+            nb_cfg_edges_padded: int,
             padded_edge_indices_dict: Dict[str, _chex_Array],
             lstm_state: Optional[hk.LSTMState],
             encs: Dict[str, List[hk.Module]],
@@ -438,27 +438,21 @@ class DFANet(nets.Net):
         """Generates one-step predictions."""
         print(f'dfa_nets line 439, in dfa_nets._dfa_one_step_pred_v1')
         # Initialise empty node/edge/graph features and adjacency matrix.
-        node_fts = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-        gkt_edge_fts = jnp.zeros((batch_size, nb_gkt_edges_padded, self.hidden_dim))
+        node_fts = jnp.zeros((batch_size, nb_bits_padded, self.hidden_dim))
+        cfg_edge_fts = jnp.zeros((batch_size, nb_cfg_edges_padded, self.hidden_dim))
 
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
         # encode node fts
-        gen_dp_data = None
-        kill_dp_data = None
-        for dp in input_dp_list:
-            node_encoder = encs[dp.name]
-            if dp.location == specs.Location.NODE:
-                node_fts = encoders.accum_node_fts(node_encoder, dp, node_fts)
-            else:
-                if dp.name == 'gen':
-                    gen_dp_data = dp.data
-                elif dp.name == 'kill':
-                    kill_dp_data = dp.data
-                else:
-                    assert False
+        dp_list_to_encode = input_dp_list[:]
+        if self.encode_hints or first_step:
+            dp_list_to_encode.append(trace_h_i)
 
-
+        for dp in dp_list_to_encode:
+            dp_name, dp_loc = dp.name, dp.location
+            encoder = encs[dp.name]
+            cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
+            node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
         #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
@@ -513,10 +507,27 @@ def _dfa_data_dimensions(features: _Features) -> Tuple[int, int, int]:
                 batch_size, nb_nodes_padded = inp.data.shape[:2]
             else:
                 assert inp.data.shape[:2] == (batch_size, nb_nodes_padded)
-        if inp.name in ['gen', 'kill', 'trace_i']:
+        if inp.name in ['gen', 'kill', 'trace_o']:
             if nb_gkt_edges_padded is None:
                 nb_gkt_edges_padded = inp.data.shape[1]
             else:
                 assert inp.data.shape[:2] == (batch_size, nb_gkt_edges_padded)
 
     return batch_size, nb_nodes_padded, nb_gkt_edges_padded
+
+
+def _yzd_data_dimensions(features: _Features) -> Tuple[int, int, int]:
+    """Returns (batch_size, nb_nodes)."""
+    batch_size = None
+    nb_bits_padded = None
+    nb_cfg_edges_padded = None
+    for inp in features.input_dp_list:
+        if inp.name in ['gen_vectors', 'kill_vectors', 'trace_o']:
+            if batch_size is None:
+                batch_size, nb_bits_padded = inp.data.shape[:2]
+            else:
+                assert inp.data.shape[:2] == (batch_size, nb_bits_padded)
+        if inp.name == 'cfg_edges':
+            nb_cfg_edges_padded = inp.data.shape[1]
+            assert batch_size == inp.data.shape[0]
+    return batch_size, nb_bits_padded, nb_cfg_edges_padded

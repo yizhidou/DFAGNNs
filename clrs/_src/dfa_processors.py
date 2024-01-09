@@ -43,64 +43,6 @@ class DFAProcessor(hk.Module):
         """
         pass
 
-
-class YZDProcessor(DFAProcessor):
-    def __init__(self, out_size: int, name='yzd_gnn'):
-        super().__init__(name=name)
-        self.out_size = out_size
-
-    def __call__(self,
-                 node_fts: _chex_Array,  # [B, N, node_fts_dim]
-                 hidden: _chex_Array,  # [B, E, hidden_dim]
-                 gen_dp_data: _chex_Array,  # [B, E_gkt]
-                 kill_dp_data: _chex_Array,  # [B, E_gkt]
-                 trace_h_i_dp_data: _chex_Array,  # [B, E_gkt]
-                 cfg_indices_padded: _chex_Array,  # [B, E_cfg, 2]
-                 gkt_indices_padded: _chex_Array,  # [B, E_gkt, 2]
-                 ):
-        nb_nodes_padded = node_fts.shape[-2]
-
-        def _segment_sum_batched(data,  # [E, nb_heads, hidden_dim/nb_heads]
-                                 segment_ids  # [E, ]
-                                 ):
-            # print(f'dfa_processor line 140, \ndata: {data.shape}; \nsegment_ids: {segment_ids.shape}')    # checked
-            return jax.ops.segment_sum(data=data,
-                                       segment_ids=segment_ids,
-                                       num_segments=nb_nodes_padded)
-
-        def _segment_max_batched(data,
-                                 segment_ids):
-            return jax.ops.segment_max(data=data,
-                                       segment_ids=segment_ids,
-                                       num_segments=nb_nodes_padded)
-
-        # step 1: info ip -> pp filtered by trace_h_i
-        gkt_source_indices = gkt_indices_padded[..., 0]  # [B, E_gkt]
-        gkt_target_indices = gkt_indices_padded[..., 1]
-        source_msg_1 = jnp.take_along_axis(arr=node_fts,
-                                           indices=dfa_utils.dim_expand_to(gkt_source_indices, node_fts),
-                                           axis=1)  # [B, E_gkt, node_fts_dim]
-        filtered_msg_1 = dfa_utils.dim_expand_to(trace_h_i_dp_data, source_msg_1) * source_msg_1  # [B, E_gkt, node_fts_dim]
-        node_msg_1 = _segment_sum_batched(data=filtered_msg_1,
-                                          segment_ids=gkt_target_indices)  # [B, N, node_fts_dim]
-        hidden_1 = jnp.concatenate([node_msg_1, hidden], axis=-1)  # [B, N, node_fts_dim+hidden_dim]
-        # step 2: info pp -> pp
-        cfg_source_indices = cfg_indices_padded[..., 0]  # [B, E_gkt]
-        cfg_target_indices = cfg_indices_padded[..., 1]
-        source_msg_2 = jnp.take_along_axis(arr=hidden_1,
-                                           indices=dfa_utils.dim_expand_to(cfg_source_indices, hidden_1),
-                                           axis=1)  # [B, E_cfg, , node_fts_dim+hidden_dim]
-        hidden_2 = _segment_max_batched(data=source_msg_2,
-                                        segment_ids=cfg_target_indices)  # [B, N, node_fts_dim+hidden_dim]
-        # step 3: info ip -> pp, filtered by kill
-        # 这个我真的不确定是重新拿一份还是就用source_msg_1
-        source_msg_3 = jnp.take_along_axis(arr=node_fts,
-                                           indices=dfa_utils.dim_expand_to(gkt_source_indices, node_fts),
-                                           axis=1)  # [B, E_gkt, node_fts_dim]
-        filtered_msg_3 = dfa_utils.dim_expand_to(kill_dp_data,
-                                            source_msg_3) * source_msg_3  # [B, E_gkt, , node_fts_dim]
-
-
 class GATSparse(DFAProcessor):
     def __init__(
             self,
