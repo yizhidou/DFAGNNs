@@ -43,26 +43,26 @@ class DFAProcessor(hk.Module):
 class AlignGNN(DFAProcessor):
     def __init__(
             self,
-            out_size: int,
-            nb_heads: int,
+            # out_size: int,
+            # nb_heads: int,
             activation: Optional[_Fn] = jax.nn.relu,
-            residual: bool = True,
-            use_ln: bool = False,
+            # residual: bool = True,
+            # use_ln: bool = False,
             name: str = 'gat_sparse',
     ):
         super().__init__(name=name)
-        self.out_size = out_size
-        self.nb_heads = nb_heads
-        if out_size % nb_heads != 0:
-            raise ValueError('The number of attention heads must divide the width!')
-        self.head_size = out_size // nb_heads
+        # self.out_size = out_size
+        # self.nb_heads = nb_heads
+        # if out_size % nb_heads != 0:
+        #     raise ValueError('The number of attention heads must divide the width!')
+        # self.head_size = out_size // nb_heads
         self.activation = activation
-        self.residual = residual
-        self.use_ln = use_ln
+        # self.residual = residual
+        # self.use_ln = use_ln
 
     def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
             self,
-            node_fts: _chex_Array,  # [B, N*m, hidden_dim]
+            bit_fts: _chex_Array,  # [B, N*m, hidden_dim]
             cfg_edge_fts: _chex_Array,  # [B, E_cfg, hidden_dim]    cfg_edge
             hidden: _chex_Array,  # [B, N*m, hidden_dim]
             cfg_indices_padded: _chex_Array,  # [B, E_cfg, 2]
@@ -72,22 +72,46 @@ class AlignGNN(DFAProcessor):
         # print('in dfa_processor line 71')   # checked
         # print(  # [B, N, hidden_dim],       [B, E_gkt, hidden_dim],                 [B, N, hidden_dim],         [B, E_cfg, 2],                                  [B, E_gkt, 2]
         #     f'node_fts: {node_fts.shape};\nedge_fts: {edge_fts.shape};\nhidden: {hidden.shape};\ncfg_indices_padded: {cfg_indices_padded.shape};\ngkt_indices_padded: {gkt_indices_padded.shape}')
-        nb_nodes_padded = node_fts.shape[-2]
-        nb_cfg_edges_padded, nb_gkt_edges_padded = cfg_indices_padded.shape[-2], gkt_indices_padded.shape[-2]
+        batch_size, nb_bits_padded = bit_fts.shape[:2]
+        nb_cfg_edges_padded = cfg_indices_padded.shape[-2]
+        nb_bits_each_node = nb_bits_padded / nb_cfg_edges_padded
         # print(  # checked
         #     f'dfa_processor line 76, \nnb_nodes_padded = {nb_nodes_padded}; \nnb_cfg_edges_padded = {nb_cfg_edges_padded}; \nnb_gkt_edges_padded = {nb_gkt_edges_padded}')
+        bits_indices_base = jnp.arange(nb_bits_each_node).reshape(1, -1)    # [1, m]
         cfg_source_indices = cfg_indices_padded[..., 0]  # [B, E_cfg]
+        source_bits = jnp.expand_dims(cfg_source_indices * nb_bits_each_node, axis=-1) + jnp.expand_dims(bits_indices_base, axis=0)
+        # [B, E, 1] + [1, 1, m] -> [B, E, m]
+        source_bits = source_bits.reshape((batch_size, -1))   # [B, E*m]
         cfg_target_indices = cfg_indices_padded[..., 1]
-        gkt_source_indices = gkt_indices_padded[..., 0]  # [B, E_gkt]
-        gkt_target_indices = gkt_indices_padded[..., 1]
+        target_bits = jnp.expand_dims(cfg_target_indices * nb_bits_each_node, axis=-1) + jnp.expand_dims(bits_indices_base,
+                                                                                                   axis=0)
+        # [B, E, 1] + [1, 1, m] -> [B, E, m]
+        target_bits = target_bits.reshape((batch_size, -1))
         # print('dfa_processor line 84')  # checked
         # print(
         #     f'cfg_r_indices: {cfg_row_indices.shape}; cfg_c_indices: {cfg_col_indices.shape}; type: {cfg_col_indices.dtype}')
         # print(
         #     f'gkt_r_indices: {gkt_row_indices.shape}; gkt_c_indices: {gkt_col_indices.shape}; type: {gkt_col_indices.dtype}')
 
-        cfg_z = jnp.concatenate([node_fts, hidden], axis=-1)  # [B, N, 2*hidden_dim]
+        z = jnp.concatenate([bit_fts, hidden], axis=-1)  # [B, N*m, 2*hidden_dim]
         # print(f'dfa_processor line 91, cfg_z: {cfg_z.shape}')   # checked
+        source_bits_values = jnp.take_along_axis(arr=z,
+                                          indices=dfa_utils.dim_expand_to(source_bits,z),
+                                          axis=1)   # [B, E*m, 2*hidden_dim]
+        filtered_source_bit_values = cfg_edge_fts * source_bits_values
+        # [B, E*m, hidden_dim]
+        @jax.vmap
+        def _segment_max_batched(data,  # [E*m, hidden_dim]
+                                 segment_ids  # [E*m, ]
+                                 ):
+            # print(f'dfa_processor line 140, \ndata: {data.shape}; \nsegment_ids: {segment_ids.shape}')    # checked
+            return jax.ops.segment_sum(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_bits_padded)
+        aggregated_bits = _segment_max_batched(data=filtered_source_bit_values,
+                                               segment_ids=target_bits)
+
+
         m = hk.Linear(self.out_size)
         skip = hk.Linear(self.out_size)
 
