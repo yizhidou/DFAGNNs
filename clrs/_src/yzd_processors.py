@@ -29,7 +29,6 @@ class DFAProcessor(hk.Module):
             node_fts: _chex_Array,
             hidden: _chex_Array,
             cfg_indices_padded: _chex_Array,
-            # gkt_indices_padded: _chex_Array,
             edge_fts: _chex_Array
     ) -> Tuple[_chex_Array, Optional[_chex_Array]]:
         """Processor inference step.
@@ -106,15 +105,16 @@ class AlignGNN_v1(DFAProcessor):
         # [B, N*m, hidden_dim]
         return updated_bits
 
+
 class AlignGNN_v2(DFAProcessor):
     def __init__(self,
                  out_size: int,
-                 activation: Optional[_Fn] = jax.nn.relu,
+                 # activation: Optional[_Fn] = jax.nn.relu,
                  name: str = 'gat_sparse',
                  ):
         super().__init__(name=name)
         self.out_size = out_size
-        self.activation = activation
+        # self.activation = activation
 
     def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
             self,
@@ -123,7 +123,7 @@ class AlignGNN_v2(DFAProcessor):
             edge_indices: _chex_Array,  # [B, E, 2]
             edge_fts: _chex_Array,  # [B, E, hidden_dim]    cfg_edge
     ):
-        nb_nodes= node_fts.shape[1]
+        nb_nodes = node_fts.shape[1]
         edge_indices_source = edge_indices[..., 0]  # [B, E]
         edge_indices_target = edge_indices[..., 1]
 
@@ -133,7 +133,7 @@ class AlignGNN_v2(DFAProcessor):
         fuse_nh_linear = hk.Linear(self.out_size)
         nh_fts = fuse_nh_linear(node_hidden_fts)
         # [B, N, m, out_size]
-        nh_values = jnp.take_along_axis(arr=nh_fts, # [B, N, m, hidden_dim]
+        nh_values = jnp.take_along_axis(arr=nh_fts,  # [B, N, m, out_size]
                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
                                         # [B, E, 1, 1]
                                         axis=1)
@@ -144,6 +144,7 @@ class AlignGNN_v2(DFAProcessor):
         edge_coeff = edge_coeff_linear(edge_fts)
         # [B, E, hidden_dim] -> [B, E, 1]
         filtered_nh_values = jnp.expand_dims(edge_coeff, axis=-1) * nh_values
+
         # [B, E, 1, 1] * [B, E, m, hidden_dim] -> [B, E, m, hidden_dim]
 
         @jax.vmap
@@ -182,11 +183,7 @@ def get_dfa_processor_factory(kind: str,
 
     def _dfa_factory(out_size: int):
         if kind == 'dfa_gat':
-            processor = GATSparse(out_size=out_size,
-                                  nb_heads=nb_heads,
-                                  activation=activation,
-                                  residual=residual,
-                                  use_ln=use_ln)
+            processor = AlignGNN_v2(out_size=out_size)
         else:
             raise ValueError('Unexpected processor kind ' + kind)
 

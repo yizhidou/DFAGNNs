@@ -345,9 +345,9 @@ class DFANet(nets.Net):
 
     def _dfa_one_step_pred(
             self,
+            hidden: _chex_Array,
             input_dp_list: _Trajectory,
             trace_h_i: probing.DataPoint,
-            hidden: _chex_Array,
             batch_size: int,
             nb_nodes_padded: int,
             nb_gkt_edges_padded: int,
@@ -419,82 +419,6 @@ class DFANet(nets.Net):
         # print('dfa_nets line 408, in dfa_nets._dfa_one_step_pred, after prediction:')
         # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
         return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
-
-    def _dfa_one_step_pred_v1(
-            self,
-            input_dp_list: _Trajectory,
-            trace_h_i: probing.DataPoint,
-            hidden: _chex_Array,
-            batch_size: int,
-            nb_bits_padded: int,
-            nb_cfg_edges_padded: int,
-            padded_edge_indices_dict: Dict[str, _chex_Array],
-            lstm_state: Optional[hk.LSTMState],
-            encs: Dict[str, List[hk.Module]],
-            decs: Dict[str, Tuple[hk.Module]],
-            repred: bool,
-            first_step: bool
-    ):
-        """Generates one-step predictions."""
-        print(f'dfa_nets line 439, in dfa_nets._dfa_one_step_pred_v1')
-        # Initialise empty node/edge/graph features and adjacency matrix.
-        node_fts = jnp.zeros((batch_size, nb_bits_padded, self.hidden_dim))
-        cfg_edge_fts = jnp.zeros((batch_size, nb_cfg_edges_padded, self.hidden_dim))
-
-        # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Encode node/edge/graph features from inputs and (optionally) hints.
-        # encode node fts
-        dp_list_to_encode = input_dp_list[:]
-        if self.encode_hints or first_step:
-            dp_list_to_encode.append(trace_h_i)
-
-        for dp in dp_list_to_encode:
-            dp_name, dp_loc = dp.name, dp.location
-            encoder = encs[dp.name]
-            cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
-            node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
-        # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
-        #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
-        nxt_hidden = hidden
-        nxt_edge = None
-        for _ in range(self.nb_msg_passing_steps):
-            nxt_hidden, nxt_edge = self.processor(
-                node_fts=node_fts,
-                gkt_edge_fts=gkt_edge_fts,
-                hidden=hidden,
-                cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
-                gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
-            )
-        if not repred:  # dropout only on training
-            nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
-
-        if self.use_lstm:
-            # lstm doesn't accept multiple batch dimensions (in our case, batch and
-            # nodes), so we vmap over the (first) batch dimension.
-            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(inputs=nxt_hidden, prev_state=lstm_state)
-        else:
-            nxt_lstm_state = None
-
-        h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)  # [B, N, 3*hidden_dim]
-        # print(f'dfa_nets line 372, h_t: {h_t.shape}')   # checked
-        if nxt_edge is not None:
-            e_t = jnp.concatenate([gkt_edge_fts, nxt_edge], axis=-1)
-        else:
-            e_t = gkt_edge_fts
-
-        # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Decode features and (optionally) hints.
-        pred_trace_o, pred_trace_h_i = dfa_decoders.decode_fts(
-            decoders=decs,
-            h_t=h_t,
-            gkt_edge_fts=e_t,
-            gkt_edge_indices=padded_edge_indices_dict['gkt_indices_padded']
-        )
-        # print('dfa_nets line 408, in dfa_nets._dfa_one_step_pred, after prediction:')
-        # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
-        return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
-
 
 def _dfa_data_dimensions(features: _Features) -> Tuple[int, int, int]:
     """Returns (batch_size, nb_nodes)."""

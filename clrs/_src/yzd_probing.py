@@ -91,7 +91,7 @@ def dfa_finalize(probes: _ProbesDict,
     # for idx in range(tmp_data_trace_h.shape[0] - 1):
     #     print(f'if trace_{idx} the same with trace_{idx+1}? {np.array_equal(tmp_data_trace_h[idx], tmp_data_trace_h[idx + 1])}')
     # [T, E]
-    edge_indices_dict = dict(cfg_bidirectional_indices_padded=cfg_indices_padded, )
+    edge_indices_dict = dict(cfg_edge_indices=cfg_indices_padded, )
     mask_dict = dict(nb_nodes=nb_nodes,
                      nb_cfg_edges=nb_cfg_edges,
                      hint_len=hint_len)
