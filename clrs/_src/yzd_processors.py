@@ -24,13 +24,10 @@ class DFAProcessor(hk.Module):
         super().__init__(name=name)
 
     @abc.abstractmethod
-    def __call__(
-            self,
-            node_fts: _chex_Array,
-            hidden: _chex_Array,
-            cfg_indices_padded: _chex_Array,
-            edge_fts: _chex_Array
-    ) -> Tuple[_chex_Array, Optional[_chex_Array]]:
+    def __call__(self,
+                 hidden: _chex_Array,
+                 *args,
+                 **kwargs):
         """Processor inference step.
 
         Returns:
@@ -40,7 +37,92 @@ class DFAProcessor(hk.Module):
         pass
 
 
-class AlignGNN_v1(DFAProcessor):
+class AlignGNN(DFAProcessor):
+    def __init__(self,
+                 out_size: int,
+                 name: str = 'gat_sparse',
+                 ):
+        super().__init__(name=name)
+        self.out_size = out_size
+
+    def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
+            self,
+            hidden: _chex_Array,  # [B, N， m, hidden_dim]
+            edge_indices: _chex_Array,  # [B, E, 2]
+            node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+            edge_fts: _chex_Array,  # [B, E, hidden_dim]    cfg_edge
+    ):
+        nb_nodes = node_fts.shape[1]
+        edge_indices_source = edge_indices[..., 0]  # [B, E]
+        edge_indices_target = edge_indices[..., 1]
+
+        # node_fts||hidden -> nh_fts
+        node_hidden_fts = jnp.concatenate([node_fts, hidden], axis=-1)  # [B, N*m, 2*hidden_dim]
+        # [B, N， m, 2*hidden_dim]
+        fuse_nh_linear = hk.Linear(self.out_size)
+        # inject gen/kill/trace_i info into hidden
+        nh_fts = fuse_nh_linear(node_hidden_fts)
+        # [B, N, m, out_size]
+        nh_values = jnp.take_along_axis(arr=nh_fts,  # [B, N, m, out_size]
+                                        indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
+                                        # [B, E, 1, 1]
+                                        axis=1)
+        # [B, E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, E, hidden_dim] -> [B, E, 1]
+        filtered_nh_values = jnp.expand_dims(edge_coeff, axis=-1) * nh_values
+
+        # [B, E, 1, 1] * [B, E, m, hidden_dim] -> [B, E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_max_batched(data,  # [E, m, hidden_dim]
+                                 segment_ids  # [E, ]
+                                 ):
+            return jax.ops.segment_sum(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes)
+
+        updated_bits = _segment_max_batched(data=filtered_nh_values,  # [B, E, m, hidden_dim]
+                                            segment_ids=edge_indices_target)
+        # [B, N, m, hidden_dim]
+        return updated_bits
+
+
+DFAProcessorFactory = Callable[[int], DFAProcessor]
+
+
+def get_dfa_processor_factory(kind: str,
+                              nb_heads: int,
+                              activation: Optional[_Fn],
+                              residual: bool,
+                              use_ln: bool) -> DFAProcessorFactory:
+    """Returns a processor factory.
+
+    Args:
+      kind: One of the available types of processor.
+      use_ln: Whether the processor passes the output through a layernorm layer.
+      nb_triplet_fts: How many triplet features to compute.
+      nb_heads: Number of attention heads for GAT processors.
+    Returns:
+      A callable that takes an `out_size` parameter (equal to the hidden
+      dimension of the network) and returns a processor instance.
+    """
+
+    def _dfa_factory(out_size: int):
+        if kind == 'gnn_align':
+            processor = AlignGNN(out_size=out_size)
+        else:
+            raise ValueError('Unexpected processor kind ' + kind)
+
+        return processor
+
+    return _dfa_factory
+
+
+class AlignGNN_deprecated(DFAProcessor):
     def __init__(self,
                  nb_bits_each_node: int,
                  activation: Optional[_Fn] = jax.nn.relu,
@@ -104,89 +186,3 @@ class AlignGNN_v1(DFAProcessor):
                                             segment_ids=bit_indices_target)
         # [B, N*m, hidden_dim]
         return updated_bits
-
-
-class AlignGNN_v2(DFAProcessor):
-    def __init__(self,
-                 out_size: int,
-                 # activation: Optional[_Fn] = jax.nn.relu,
-                 name: str = 'gat_sparse',
-                 ):
-        super().__init__(name=name)
-        self.out_size = out_size
-        # self.activation = activation
-
-    def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
-            self,
-            node_fts: _chex_Array,  # [B, N， m, hidden_dim]
-            hidden: _chex_Array,  # [B, N， m, hidden_dim]
-            edge_indices: _chex_Array,  # [B, E, 2]
-            edge_fts: _chex_Array,  # [B, E, hidden_dim]    cfg_edge
-    ):
-        nb_nodes = node_fts.shape[1]
-        edge_indices_source = edge_indices[..., 0]  # [B, E]
-        edge_indices_target = edge_indices[..., 1]
-
-        # node_fts||hidden -> nh_fts
-        node_hidden_fts = jnp.concatenate([node_fts, hidden], axis=-1)  # [B, N*m, 2*hidden_dim]
-        # [B, N， m, 2*hidden_dim]
-        fuse_nh_linear = hk.Linear(self.out_size)
-        nh_fts = fuse_nh_linear(node_hidden_fts)
-        # [B, N, m, out_size]
-        nh_values = jnp.take_along_axis(arr=nh_fts,  # [B, N, m, out_size]
-                                        indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
-                                        # [B, E, 1, 1]
-                                        axis=1)
-        # [B, E, m, hidden_dim]
-
-        # get coefficient from edge_fts
-        edge_coeff_linear = hk.Linear(1)
-        edge_coeff = edge_coeff_linear(edge_fts)
-        # [B, E, hidden_dim] -> [B, E, 1]
-        filtered_nh_values = jnp.expand_dims(edge_coeff, axis=-1) * nh_values
-
-        # [B, E, 1, 1] * [B, E, m, hidden_dim] -> [B, E, m, hidden_dim]
-
-        @jax.vmap
-        def _segment_max_batched(data,  # [E, m, hidden_dim]
-                                 segment_ids  # [E, ]
-                                 ):
-            return jax.ops.segment_sum(data=data,
-                                       segment_ids=segment_ids,
-                                       num_segments=nb_nodes)
-
-        updated_bits = _segment_max_batched(data=filtered_nh_values,  # [B, E, m, hidden_dim]
-                                            segment_ids=edge_indices_target)
-        # [B, N, m, hidden_dim]
-        return updated_bits
-
-
-DFAProcessorFactory = Callable[[int], DFAProcessor]
-
-
-def get_dfa_processor_factory(kind: str,
-                              nb_heads: int,
-                              activation: Optional[_Fn],
-                              residual: bool,
-                              use_ln: bool) -> DFAProcessorFactory:
-    """Returns a processor factory.
-
-    Args:
-      kind: One of the available types of processor.
-      use_ln: Whether the processor passes the output through a layernorm layer.
-      nb_triplet_fts: How many triplet features to compute.
-      nb_heads: Number of attention heads for GAT processors.
-    Returns:
-      A callable that takes an `out_size` parameter (equal to the hidden
-      dimension of the network) and returns a processor instance.
-    """
-
-    def _dfa_factory(out_size: int):
-        if kind == 'dfa_gat':
-            processor = AlignGNN_v2(out_size=out_size)
-        else:
-            raise ValueError('Unexpected processor kind ' + kind)
-
-        return processor
-
-    return _dfa_factory
