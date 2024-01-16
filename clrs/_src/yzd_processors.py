@@ -94,18 +94,11 @@ class AlignGNN(DFAProcessor):
 DFAProcessorFactory = Callable[[int], DFAProcessor]
 
 
-def get_dfa_processor_factory(kind: str,
-                              nb_heads: int,
-                              activation: Optional[_Fn],
-                              residual: bool,
-                              use_ln: bool) -> DFAProcessorFactory:
+def get_dfa_processor_factory(kind: str) -> DFAProcessorFactory:
     """Returns a processor factory.
 
     Args:
       kind: One of the available types of processor.
-      use_ln: Whether the processor passes the output through a layernorm layer.
-      nb_triplet_fts: How many triplet features to compute.
-      nb_heads: Number of attention heads for GAT processors.
     Returns:
       A callable that takes an `out_size` parameter (equal to the hidden
       dimension of the network) and returns a processor instance.

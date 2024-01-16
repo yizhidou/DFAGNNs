@@ -9,7 +9,7 @@ from clrs._src import encoders
 from clrs._src import probing
 from clrs._src import yzd_processors
 from clrs._src import samplers, dfa_sampler
-from clrs._src import specs, yzd_specs
+from clrs._src import specs
 from clrs._src import nets
 
 import haiku as hk
@@ -35,7 +35,7 @@ class _MessagePassingScanState:
     lstm_state: Optional[hk.LSTMState]
 
 
-class DFANet(nets.Net, abc.ABC):
+class DFANet(nets.Net):
     """Building blocks (networks) used to encode and decode messages."""
 
     def __init__(
@@ -50,8 +50,8 @@ class DFANet(nets.Net, abc.ABC):
             dropout_prob: float,
             hint_teacher_forcing: float,
             # nb_msg_passing_steps = 1,
+            hint_repred_mode: str,
             if_dfa=True,
-            hint_repred_mode='soft',
             # nb_dims=None,
             name: str = 'dfa_net',
     ):
@@ -372,6 +372,7 @@ class DFANet(nets.Net, abc.ABC):
 
 
 class DFANet_v1(DFANet):
+    # the old version
     def _dfa_one_step_pred(self,
                            hidden: _chex_Array,
                            input_dp_list: _Trajectory,

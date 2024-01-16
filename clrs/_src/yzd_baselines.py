@@ -25,9 +25,9 @@ import chex
 from clrs._src import decoders
 from clrs._src import losses, dfa_losses
 from clrs._src import model
-from clrs._src import dfa_nets
+from clrs._src import yzd_nets
 from clrs._src import probing
-from clrs._src import dfa_processors
+from clrs._src import yzd_processors
 from clrs._src import dfa_sampler
 from clrs._src import specs
 from clrs._src import baselines
@@ -61,15 +61,15 @@ class DFABaselineModel(model.Model):
             self,
             spec: Union[_Spec, List[_Spec]],
             # dummy_trajectory: Union[List[_Feedback], _Feedback],
-            processor_factory: dfa_processors.DFAProcessorFactory,
+            processor_factory: yzd_processors.DFAProcessorFactory,
             hidden_dim: int = 32,
-            encode_hints: bool = False,
+            encode_hints: bool = True,
             decode_hints: bool = True,
             encoder_init: str = 'default',
             use_lstm: bool = False,
             dropout_prob: float = 0.0,
             hint_teacher_forcing: float = 0.0,
-            hint_repred_mode: str = 'soft',
+            hint_repred_mode: str = 'hard',
             name: str = 'dfa_base_model',
             nb_msg_passing_steps: int = 1,
             learning_rate: float = 0.005,  #
@@ -153,20 +153,21 @@ class DFABaselineModel(model.Model):
 
     def _create_net_fns(self, hidden_dim: int,
                         encode_hints: bool,
-                        processor_factory: dfa_processors.DFAProcessorFactory,
+                        processor_factory: yzd_processors.DFAProcessorFactory,
                         use_lstm: bool,
                         encoder_init: str,
                         dropout_prob: float,
                         hint_teacher_forcing: float,
                         hint_repred_mode: str):
         print('dfa_baselines line 162~ in __init__._create_net_fns')
+
         def _use_net(features_list: List[_Features],
                      repred: bool,
                      algorithm_index: int,
                      return_hints: bool,
                      return_all_outputs: bool):
             print('dfa_baselines line 168~ in _use_net')
-            return dfa_nets.DFANet(spec=self._spec,
+            return yzd_nets.DFANet(spec=self._spec,
                                    hidden_dim=hidden_dim,
                                    encode_hints=encode_hints,
                                    decode_hints=self.decode_hints,
@@ -175,13 +176,11 @@ class DFABaselineModel(model.Model):
                                    encoder_init=encoder_init,
                                    dropout_prob=dropout_prob,
                                    hint_teacher_forcing=hint_teacher_forcing,
-                                   hint_repred_mode=hint_repred_mode,
-                                   # nb_dims=self.nb_dims,
-                                   nb_msg_passing_steps=self.nb_msg_passing_steps)(features_list,
-                                                                                   repred,
-                                                                                   algorithm_index,
-                                                                                   return_hints,
-                                                                                   return_all_outputs)
+                                   hint_repred_mode=hint_repred_mode)(features_list,
+                                                                      repred,
+                                                                      algorithm_index,
+                                                                      return_hints,
+                                                                      return_all_outputs)
 
         # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)

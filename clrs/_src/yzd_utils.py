@@ -13,95 +13,95 @@ taskname_shorts = dict(yzd_liveness='yl', yzd_dominance='yd', yzd_reachability='
 np.set_printoptions(threshold=sys.maxsize)
 
 
-class YZDExcpetion(probing.ProbeError):
-    # the current sample has been previously recognized as errored
-    RECORDED_ERRORED_SAMPLE = 0
-    # newly recognized error sample
-    ANALYZE_ERRORED_SAMPLE = 1
-    # too few interested points error (less than selected num)
-    TOO_FEW_IP_NODES = 2
-    # too much program points error
-    TOO_MANY_PP_NODES = 3
+# class YZDExcpetion(probing.ProbeError):
+#     # the current sample has been previously recognized as errored
+#     RECORDED_ERRORED_SAMPLE = 0
+#     # newly recognized error sample
+#     ANALYZE_ERRORED_SAMPLE = 1
+#     # too few interested points error (less than selected num)
+#     TOO_FEW_IP_NODES = 2
+#     # too much program points error
+#     TOO_MANY_PP_NODES = 3
+#
+#     UNRECOGNIZED_ACTIVATION_TYPE = 4
+#
+#     UNRECOGNIZED_TASK_NAME = 5
+#
+#     def __init__(self, error_code: int,
+#                  sample_id: Union[str, None] = None):
+#         self.error_code = error_code
+#         self.sample_id = sample_id
+#         super().__init__()
+#
+#     def error_msg(self):
+#         if self.error_code == self.RECORDED_ERRORED_SAMPLE:
+#             msg = 'This sample has previously been recorded as errored!'
+#         # elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
+#         #     msg = 'This sample is newly recognized errored, we have now recorded it!'
+#         elif self.error_code == self.TOO_FEW_IP_NODES:
+#             msg = 'This sample has too few IP nodes, so we drop it!'
+#         elif self.error_code == self.TOO_MANY_PP_NODES:
+#             msg = 'This sample has too many PP nodes, so we drop it!'
+#         elif self.error_code == self.UNRECOGNIZED_ACTIVATION_TYPE:
+#             msg = 'Unrecognized activation type! please check your spelling!'
+#         elif self.error_code == self.UNRECOGNIZED_TASK_NAME:
+#             msg = 'Unrecognized task name! please check your spelling!'
+#         else:
+#             msg = 'Unrecognized error!'
+#         if self.sample_id:
+#             msg += f' sample_id: {self.sample_id}'
+#         return msg
+#
 
-    UNRECOGNIZED_ACTIVATION_TYPE = 4
-
-    UNRECOGNIZED_TASK_NAME = 5
-
-    def __init__(self, error_code: int,
-                 sample_id: Union[str, None] = None):
-        self.error_code = error_code
-        self.sample_id = sample_id
-        super().__init__()
-
-    def error_msg(self):
-        if self.error_code == self.RECORDED_ERRORED_SAMPLE:
-            msg = 'This sample has previously been recorded as errored!'
-        # elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
-        #     msg = 'This sample is newly recognized errored, we have now recorded it!'
-        elif self.error_code == self.TOO_FEW_IP_NODES:
-            msg = 'This sample has too few IP nodes, so we drop it!'
-        elif self.error_code == self.TOO_MANY_PP_NODES:
-            msg = 'This sample has too many PP nodes, so we drop it!'
-        elif self.error_code == self.UNRECOGNIZED_ACTIVATION_TYPE:
-            msg = 'Unrecognized activation type! please check your spelling!'
-        elif self.error_code == self.UNRECOGNIZED_TASK_NAME:
-            msg = 'Unrecognized task name! please check your spelling!'
-        else:
-            msg = 'Unrecognized error!'
-        if self.sample_id:
-            msg += f' sample_id: {self.sample_id}'
-        return msg
-
-
-class SamplePathProcessor:
-    def __init__(self, sourcegraph_dir: str,
-                 errorlog_savepath: str,
-                 dataset_savedir: Union[None, str] = None,
-                 statistics_savepath: Union[None, str] = None):
-        if not os.path.isdir(sourcegraph_dir):
-            # YZDTODO raise an error
-            pass
-        self.sourcegraph_dir = sourcegraph_dir
-        self.errored_sample_ids = {}
-        if not os.path.isfile(errorlog_savepath):
-            os.system(f'touch {errorlog_savepath}')
-        else:
-            with open(errorlog_savepath) as errored_reader:
-                for line in errored_reader.readlines():
-                    errored_sample_id = line.split(':')[0].strip()
-                    self.errored_sample_ids[errored_sample_id] = 1
-        self.errorlog_savepath = errorlog_savepath
-        self.dataset_savedir = dataset_savedir
-        self.statistics_savepath = statistics_savepath
-
-    def sourcegraph_savepath(self, sample_id):
-        return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
-
-    def _trace_savedir(self, task_name):
-        return os.path.join(self.dataset_savedir, task_name, 'Traces')
-
-    def _edge_savedir(self, task_name):
-        return os.path.join(self.dataset_savedir, task_name, 'Edges')
-
-    def trace_savepath(self, task_name, if_sync, sample_id):
-        tmp_str = "sync" if if_sync else "async"
-        return os.path.join(self._trace_savedir(task_name), tmp_str,
-                            sample_id + f'.{taskname_shorts[task_name]}.{tmp_str}.trace')
-
-    def edge_savepath(self, task_name, sample_id):
-        return os.path.join(self._edge_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.edge')
-
-    def if_sample_exists(self, task_name, if_syn, sample_id):
-        if not self.dataset_savedir:
-            return False
-        trace_path_to_check = self.trace_savepath(task_name, if_syn, sample_id)
-        edge_path_to_check = self.edge_savepath(task_name, sample_id)
-        if not os.path.isfile(trace_path_to_check) or not os.path.isfile(edge_path_to_check):
-            return False
-        if os.path.getsize(trace_path_to_check) == 0 or os.path.getsize(edge_path_to_check) == 0:
-            return False
-        return True
-
+# class SamplePathProcessor:
+#     def __init__(self, sourcegraph_dir: str,
+#                  errorlog_savepath: str,
+#                  dataset_savedir: Union[None, str] = None,
+#                  statistics_savepath: Union[None, str] = None):
+#         if not os.path.isdir(sourcegraph_dir):
+#             # YZDTODO raise an error
+#             pass
+#         self.sourcegraph_dir = sourcegraph_dir
+#         self.errored_sample_ids = {}
+#         if not os.path.isfile(errorlog_savepath):
+#             os.system(f'touch {errorlog_savepath}')
+#         else:
+#             with open(errorlog_savepath) as errored_reader:
+#                 for line in errored_reader.readlines():
+#                     errored_sample_id = line.split(':')[0].strip()
+#                     self.errored_sample_ids[errored_sample_id] = 1
+#         self.errorlog_savepath = errorlog_savepath
+#         self.dataset_savedir = dataset_savedir
+#         self.statistics_savepath = statistics_savepath
+#
+#     def sourcegraph_savepath(self, sample_id):
+#         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
+#
+#     def _trace_savedir(self, task_name):
+#         return os.path.join(self.dataset_savedir, task_name, 'Traces')
+#
+#     def _edge_savedir(self, task_name):
+#         return os.path.join(self.dataset_savedir, task_name, 'Edges')
+#
+#     def trace_savepath(self, task_name, if_sync, sample_id):
+#         tmp_str = "sync" if if_sync else "async"
+#         return os.path.join(self._trace_savedir(task_name), tmp_str,
+#                             sample_id + f'.{taskname_shorts[task_name]}.{tmp_str}.trace')
+#
+#     def edge_savepath(self, task_name, sample_id):
+#         return os.path.join(self._edge_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.edge')
+#
+#     def if_sample_exists(self, task_name, if_syn, sample_id):
+#         if not self.dataset_savedir:
+#             return False
+#         trace_path_to_check = self.trace_savepath(task_name, if_syn, sample_id)
+#         edge_path_to_check = self.edge_savepath(task_name, sample_id)
+#         if not os.path.isfile(trace_path_to_check) or not os.path.isfile(edge_path_to_check):
+#             return False
+#         if os.path.getsize(trace_path_to_check) == 0 or os.path.getsize(edge_path_to_check) == 0:
+#             return False
+#         return True
+#
 
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
