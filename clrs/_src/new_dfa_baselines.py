@@ -25,10 +25,10 @@ import chex
 from clrs._src import decoders
 from clrs._src import losses, dfa_losses
 from clrs._src import model
-from clrs._src import new_dfa_nets
+from clrs._src import dfa_nets
 from clrs._src import probing
-from clrs._src import new_dfa_processors
-from clrs._src import new_dfa_samplers
+from clrs._src import dfa_processors
+from clrs._src import dfa_sampler
 from clrs._src import specs
 from clrs._src import baselines
 
@@ -40,14 +40,14 @@ import optax
 
 _Array = chex.Array
 _DataPoint = probing.DataPoint
-_Features = new_dfa_samplers.Features
+_Features = dfa_sampler.Features
 # _FeaturesChunked = samplers.FeaturesChunked
-_Feedback = new_dfa_samplers.Feedback
+_Feedback = dfa_sampler.Feedback
 _Location = specs.Location
 _Seed = jnp.integer
 _Spec = specs.Spec
 _Stage = specs.Stage
-_Trajectory = new_dfa_samplers.Trajectory
+_Trajectory = dfa_sampler.Trajectory
 _Type = specs.Type
 _OutputClass = specs.OutputClass
 
@@ -61,7 +61,7 @@ class DFABaselineModel(model.Model):
             self,
             spec: Union[_Spec, List[_Spec]],
             # dummy_trajectory: Union[List[_Feedback], _Feedback],
-            processor_factory: new_dfa_processors.DFAProcessorFactory,
+            processor_factory: dfa_processors.DFAProcessorFactory,
             hidden_dim: int = 32,
             encode_hints: bool = False,
             decode_hints: bool = True,
@@ -71,7 +71,7 @@ class DFABaselineModel(model.Model):
             hint_teacher_forcing: float = 0.0,
             hint_repred_mode: str = 'soft',
             name: str = 'dfa_base_model',
-            # nb_msg_passing_steps: int = 1,
+            nb_msg_passing_steps: int = 1,
             learning_rate: float = 0.005,  #
             grad_clip_max_norm: float = 0.0,  #
             checkpoint_path: str = '/tmp/clrs3',  #
@@ -143,6 +143,7 @@ class DFABaselineModel(model.Model):
         else:
             self.opt = optax.adam(learning_rate)
 
+        self.nb_msg_passing_steps = nb_msg_passing_steps
         self._create_net_fns(hidden_dim, encode_hints, processor_factory, use_lstm,
                              encoder_init, dropout_prob, hint_teacher_forcing,
                              hint_repred_mode)
@@ -152,34 +153,35 @@ class DFABaselineModel(model.Model):
 
     def _create_net_fns(self, hidden_dim: int,
                         encode_hints: bool,
-                        processor_factory: new_dfa_processors.DFAProcessorFactory,
+                        processor_factory: dfa_processors.DFAProcessorFactory,
                         use_lstm: bool,
                         encoder_init: str,
                         dropout_prob: float,
                         hint_teacher_forcing: float,
                         hint_repred_mode: str):
         print('dfa_baselines line 162~ in __init__._create_net_fns')
-
         def _use_net(features_list: List[_Features],
                      repred: bool,
                      algorithm_index: int,
                      return_hints: bool,
                      return_all_outputs: bool):
             print('dfa_baselines line 168~ in _use_net')
-            return new_dfa_nets.DFANet_v2(spec=self._spec,
-                                          hidden_dim=hidden_dim,
-                                          encode_hints=encode_hints,
-                                          decode_hints=self.decode_hints,
-                                          processor_factory=processor_factory,
-                                          use_lstm=use_lstm,
-                                          encoder_init=encoder_init,
-                                          dropout_prob=dropout_prob,
-                                          hint_teacher_forcing=hint_teacher_forcing,
-                                          hint_repred_mode=hint_repred_mode)(features_list,
-                                                                             repred,
-                                                                             algorithm_index,
-                                                                             return_hints,
-                                                                             return_all_outputs)
+            return dfa_nets.DFANet(spec=self._spec,
+                                   hidden_dim=hidden_dim,
+                                   encode_hints=encode_hints,
+                                   decode_hints=self.decode_hints,
+                                   processor_factory=processor_factory,
+                                   use_lstm=use_lstm,
+                                   encoder_init=encoder_init,
+                                   dropout_prob=dropout_prob,
+                                   hint_teacher_forcing=hint_teacher_forcing,
+                                   hint_repred_mode=hint_repred_mode,
+                                   # nb_dims=self.nb_dims,
+                                   nb_msg_passing_steps=self.nb_msg_passing_steps)(features_list,
+                                                                                   repred,
+                                                                                   algorithm_index,
+                                                                                   return_hints,
+                                                                                   return_all_outputs)
 
         # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)

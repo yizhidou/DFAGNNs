@@ -33,8 +33,6 @@ class DFASampler(samplers.Sampler):
                  seed: int,
                  sample_loader: new_dfa_utils.SampleLoader
                  ):
-        if not task_name in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability', 'dfa']:
-            raise NotImplementedError(f'No implementation of algorithm {task_name}.')
         self.sample_id_list = sample_id_list
         self.task_name = task_name
         self.sample_loader = sample_loader
@@ -42,8 +40,9 @@ class DFASampler(samplers.Sampler):
         self.max_num_pp = self.sample_loader.max_num_pp
         random.seed(seed)
         self._iter_sample_id_list = iter(self.sample_id_list)
+        algo = getattr(algorithms, 'dfa') if self.sample_loader.if_dfa else getattr(algorithms, task_name)
         samplers.Sampler.__init__(self,
-                                  algorithm=getattr(algorithms, task_name),
+                                  algorithm=algo,
                                   spec=dfa_specs.DFASPECS[task_name],
                                   num_samples=-1,  #
                                   seed=seed,
@@ -74,7 +73,10 @@ class DFASampler(samplers.Sampler):
             # sample_id = 'poj104_103.12489.6'
             print(f'{sample_id} has been sampled... (dfa_sampler)')
             try:
-                edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id)
+                if self.sample_loader.if_dfa:
+                    edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, self.task_name)
+                else:
+                    edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, self.task_name)
             except probing.ProbeError as err:
                 if isinstance(err, new_dfa_utils.DFAException):
                     print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
@@ -143,24 +145,6 @@ class DFASampler(samplers.Sampler):
                         trace_o=batched_trace_o)
 
 
-def build_dfa_sampler(task_name: str,
-                      sample_id_list: List[str],
-                      seed: int,
-                      sample_loader: new_dfa_utils.SampleLoader
-                      ) -> Tuple[DFASampler, Spec]:
-    """Builds a sampler. See `Sampler` documentation."""
-
-    if task_name not in ['dfa_liveness', 'dfa_dominance', 'dfa_reachability']:
-        raise NotImplementedError(f'No implementation of algorithm {task_name}.')
-    spec = dfa_specs.DFASPECS[task_name]
-
-    sampler = DFASampler(task_name=task_name,
-                         sample_id_list=sample_id_list,
-                         seed=seed,
-                         sample_loader=sample_loader)
-    return sampler, spec
-
-
 def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     assert ioh_dp_list_list
     for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
@@ -176,13 +160,29 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
                                   *ioh_dp_list_list)
 
 
+def build_dfa_sampler(task_name: str,
+                      sample_id_list: List[str],
+                      seed: int,
+                      sample_loader: new_dfa_utils.SampleLoader
+                      ) -> Tuple[DFASampler, Spec]:
+    """Builds a sampler. See `Sampler` documentation."""
+
+    assert task_name in ['liveness', 'dominance', 'reachability']
+    spec = dfa_specs.DFASPECS[task_name]
+
+    sampler = DFASampler(task_name=task_name,
+                         sample_id_list=sample_id_list,
+                         seed=seed,
+                         sample_loader=sample_loader)
+    return sampler, spec
+
+
 def FeedbackGenerator(dfa_sampler: DFASampler,
                       batch_size: int,
                       if_vali_or_test: bool = False):
     while True:
         yield dfa_sampler.next(batch_size=batch_size,
                                if_vali_or_test=if_vali_or_test)
-
 
 # def FeedbackGenerator_limited(dfa_sampler: DFASampler,
 #                               batch_size: int):
