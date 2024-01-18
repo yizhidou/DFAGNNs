@@ -137,7 +137,7 @@ def dfa(dfa_sample_loader: new_dfa_utils.SampleLoader,
     '''sparse version'''
     trace_list, array_list = dfa_sample_loader.load_a_sample(task_name=task_name,
                                                              sample_id=sample_id)
-    cfg_edges, gen_vectors, kill_vectors = array_list
+    gen_vectors, kill_vectors, cfg_edges = array_list
     if task_name == 'liveness':
         direction = np.zeros(1)
         # may_or_must = np.ones()

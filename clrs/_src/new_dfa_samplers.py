@@ -43,7 +43,8 @@ class DFASampler(samplers.Sampler):
         algo = getattr(algorithms, 'dfa') if self.sample_loader.if_dfa else getattr(algorithms, task_name)
         samplers.Sampler.__init__(self,
                                   algorithm=algo,
-                                  spec=dfa_specs.DFASPECS[task_name],
+                                  spec=dfa_specs.DFASPECS['dfa'] if sample_loader.if_dfa else dfa_specs.DFASPECS[
+                                      task_name],
                                   num_samples=-1,  #
                                   seed=seed,
                                   if_estimate_max_step=False)
@@ -149,6 +150,7 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     assert ioh_dp_list_list
     for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
         for dp_idx, dp in enumerate(dp_list_one_sample):
+            print(f'new_dfa_sampler line 153, {dp.name}: {dp.data.shape}')
             if dp.name == 'trace_h':
                 assert dp.data.shape[1] == 1
                 concat_dim = 1
@@ -168,7 +170,11 @@ def build_dfa_sampler(task_name: str,
     """Builds a sampler. See `Sampler` documentation."""
 
     assert task_name in ['liveness', 'dominance', 'reachability']
-    spec = dfa_specs.DFASPECS[task_name]
+    print(f'new_dfa_sampler line 171 if_dfa = {sample_loader.if_dfa}')
+    if sample_loader.if_dfa:
+        spec = dfa_specs.DFASPECS['dfa']
+    else:
+        spec = dfa_specs.DFASPECS[task_name]
 
     sampler = DFASampler(task_name=task_name,
                          sample_id_list=sample_id_list,

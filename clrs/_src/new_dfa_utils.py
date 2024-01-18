@@ -502,9 +502,12 @@ def parse_params(params_filepath: str):
     params_dict['dfa_sampler']['test_sample_id_list'] = test_sample_id_list
     del params_dict['dfa_sampler']['test_sample_id_savepath']
 
-    params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
-    params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
-    del params_dict['processor']['activation_name']
+    if params_dict['sample_loader']['if_dfa']:
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa']]
+    else:
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
+        params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
+        del params_dict['processor']['activation_name']
     return params_dict
 
 

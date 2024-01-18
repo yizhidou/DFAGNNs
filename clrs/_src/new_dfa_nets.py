@@ -473,7 +473,7 @@ class DFANet_v2(DFANet):
         dp_list_to_encode = input_dp_list[:]
         if self.encode_hints or first_step:
             dp_list_to_encode.append(trace_h_i)
-
+        print(f'dfa_new_nets line 476, encs keys: {encs.keys()}')
         for dp in dp_list_to_encode:
             encoder = encs[dp.name]
             cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
@@ -516,6 +516,7 @@ def _dfa_data_dimensions(if_dfa,
     if if_dfa:
         for inp in features.input_dp_list:
             if inp.name in ['gen_vectors', 'kill_vectors', 'trace_o']:
+                print(f'new_dfa_net line 519, {inp.name}: {inp.data.shape}')
                 if batch_size is None:
                     batch_size, nb_nodes_padded, nb_bits_each = inp.data.shape
                 else:

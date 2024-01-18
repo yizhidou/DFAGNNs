@@ -38,8 +38,8 @@ DFASPECS = types.MappingProxyType({
         # 'may_or_must': (specs.Stage.INPUT, specs.Location.GRAPH, specs.Type.MASK),
         'direction': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
         'cfg_edges': (specs.Stage.INPUT, specs.Location.EDGE, specs.Type.MASK),
-        'gen_vectors': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.BINARY_MATRIX),
-        'kill_vectors': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.BINARY_MATRIX),
-        'trace_h': (specs.Stage.HINT, specs.Location.NODE, specs.Type.BINARY_MATRIX),
-        'trace_o': (specs.Stage.OUTPUT, specs.Location.NODE, specs.Type.BINARY_MATRIX)}
+        'gen_vectors': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.MASK),
+        'kill_vectors': (specs.Stage.INPUT, specs.Location.NODE, specs.Type.MASK),
+        'trace_h': (specs.Stage.HINT, specs.Location.NODE, specs.Type.MASK),
+        'trace_o': (specs.Stage.OUTPUT, specs.Location.NODE, specs.Type.MASK)}
 })
