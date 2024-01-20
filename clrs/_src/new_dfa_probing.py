@@ -123,17 +123,17 @@ def finalize_for_ldr(probes: _ProbesDict,
                      nb_cfg_edges=nb_cfg_edges,
                      nb_gkt_edges=nb_gkt_edges,
                      hint_len=hint_len)
-    print('dfa_probing line 126')
+    # print('dfa_probing line 126')
     # print(f'cfg_inidices_padded: \n{cfg_indices_padded}')
     # print(cfg_indices_padded) # checked~
     # print(f'gkt_indices_padded: \n{gkt_indices_padded}')
-    tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['gen']['data']
+    # tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['gen']['data']
     # print(f'gen_padded: \n{tmp}')
     # if 'kill' in probes[specs.Stage.INPUT][specs.Location.EDGE]:
     #     tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['kill']['data']
     #     print(f'kill_padded: \n{tmp}')
     # print(gkt_indices_padded)   # checked~
-    print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; nb_gkt_edges: {nb_gkt_edges}; hint_len: {hint_len}')
+    # print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; nb_gkt_edges: {nb_gkt_edges}; hint_len: {hint_len}')
     return edge_indices_dict, mask_dict
 
 
@@ -191,7 +191,7 @@ def finalize_for_dfa(probes: _ProbesDict,
                                                                                expected_nb_cfg_edges - nb_cfg_edges)])
                     else:
                         assert name in ['gen_vectors', 'kill_vectors', 'trace_o']
-                        print(f'new_dfa_probing line 194, {name}: {old_data.shape}')
+                        # print(f'new_dfa_probing line 194, {name}: {old_data.shape}')
                         if nb_nodes is None:
                             nb_nodes = old_data.shape[0]
                         else:
@@ -203,7 +203,7 @@ def finalize_for_dfa(probes: _ProbesDict,
                                                                           axis=0)
 
                         # [n, nb_ip] -> [N, nb_ip] -> [N*nb_ip, ]
-                    print('dfa_new_probing line 205, {}: {}'.format(name, probes[stage][loc][name]['data'].shape))
+                    # print('new_dfa_probing line 205, {}: {}'.format(name, probes[stage][loc][name]['data'].shape))
     padded_trace_o = probes[_Stage.OUTPUT][_Location.NODE]['trace_o']['data']
     # [N, nb_ip]
     if hint_len < expected_hint_len:
@@ -219,7 +219,7 @@ def finalize_for_dfa(probes: _ProbesDict,
     # for idx in range(tmp_data_trace_h.shape[0] - 1):
     #     print(f'if trace_{idx} the same with trace_{idx+1}? {np.array_equal(tmp_data_trace_h[idx], tmp_data_trace_h[idx + 1])}')
     # [T, E]
-    edge_indices_dict = dict(cfg_edge_indices=cfg_indices_padded, )
+    edge_indices_dict = dict(cfg_indices_padded=cfg_indices_padded, )
     mask_dict = dict(nb_nodes=nb_nodes,
                      nb_cfg_edges=nb_cfg_edges,
                      hint_len=hint_len)

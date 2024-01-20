@@ -7,7 +7,7 @@ import jax.ops
 import abc
 from typing import Any, Callable, List, Optional, Tuple, Union
 
-from clrs._src import dfa_utils
+from clrs._src import new_dfa_utils
 
 _chex_Array = chex.Array
 _Fn = Callable[..., Any]
@@ -48,13 +48,13 @@ class AlignGNN(DFAProcessor):
     def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
             self,
             hidden: _chex_Array,  # [B, N， m, hidden_dim]
-            edge_indices: _chex_Array,  # [B, E, 2]
+            cfg_indices_padded: _chex_Array,  # [B, E, 2]
             node_fts: _chex_Array,  # [B, N， m, hidden_dim]
             edge_fts: _chex_Array,  # [B, E, hidden_dim]    cfg_edge
     ):
         nb_nodes = node_fts.shape[1]
-        edge_indices_source = edge_indices[..., 0]  # [B, E]
-        edge_indices_target = edge_indices[..., 1]
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, E]
+        edge_indices_target = cfg_indices_padded[..., 1]
 
         # node_fts||hidden -> nh_fts
         node_hidden_fts = jnp.concatenate([node_fts, hidden], axis=-1)  # [B, N*m, 2*hidden_dim]
@@ -64,7 +64,7 @@ class AlignGNN(DFAProcessor):
         nh_fts = fuse_nh_linear(node_hidden_fts)
         # [B, N, m, out_size]
         nh_values = jnp.take_along_axis(arr=nh_fts,  # [B, N, m, out_size]
-                                        indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
+                                        indices=new_dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
                                         # [B, E, 1, 1]
                                         axis=1)
         # [B, E, m, hidden_dim]
@@ -149,12 +149,12 @@ class GATSparse(DFAProcessor):
         cfg_att_2 = a_2(cfg_z)  # [B, N, nb_heads]
         # print(f'cfg_processor line 100, cfg_att_1: {cfg_att_1.shape}; cfg_att_2: {cfg_att_2.shape}')    # checked
         cfg_logits = (jnp.take_along_axis(arr=cfg_att_1,
-                                          indices=dfa_utils.dim_expand_to(cfg_source_indices,
+                                          indices=new_dfa_utils.dim_expand_to(cfg_source_indices,
                                                                           cfg_att_1),
                                           axis=1)  # [B, E_cfg, nb_heads]
                       +
                       jnp.take_along_axis(arr=cfg_att_2,
-                                          indices=dfa_utils.dim_expand_to(cfg_target_indices,
+                                          indices=new_dfa_utils.dim_expand_to(cfg_target_indices,
                                                                           cfg_att_2),
                                           axis=1))  # [B, E_cfg, nb_heads]
 
@@ -176,7 +176,7 @@ class GATSparse(DFAProcessor):
             cfg_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 134, cfg_values: {cfg_values.shape}')    # checked
         cfg_values_source = jnp.take_along_axis(arr=cfg_values,
-                                                indices=dfa_utils.dim_expand_to(cfg_source_indices, cfg_values),
+                                                indices=new_dfa_utils.dim_expand_to(cfg_source_indices, cfg_values),
                                                 axis=1)  # [B, E_cfg, nb_heads, hidden_dim/nb_heads]
         # print(f'dfa_processor line 139, cfg_values_source: {cfg_values_source.shape}; cfg_coefs: {cfg_coefs.shape}')    # checked
         cfg_hidden = jnp.expand_dims(cfg_coefs,
@@ -217,11 +217,11 @@ class GATSparse(DFAProcessor):
         gkt_att_e = a_e(gkt_edge_fts)  # [B, E_gkt, nb_heads]
         gkt_logits = (
                 jnp.take_along_axis(arr=gkt_att_1,
-                                    indices=dfa_utils.dim_expand_to(gkt_source_indices, gkt_att_1),
+                                    indices=new_dfa_utils.dim_expand_to(gkt_source_indices, gkt_att_1),
                                     axis=1)
                 +  # + [B, E_gkt, nb_heads]
                 jnp.take_along_axis(arr=gkt_att_2,
-                                    indices=dfa_utils.dim_expand_to(gkt_target_indices, gkt_att_2),
+                                    indices=new_dfa_utils.dim_expand_to(gkt_target_indices, gkt_att_2),
                                     axis=1)
                 +  # + [B, E_gkt, nb_heads]
                 gkt_att_e  # + [B, E_gkt, nb_heads]
@@ -242,7 +242,7 @@ class GATSparse(DFAProcessor):
             gkt_values,
             gkt_values.shape[:-1] + (self.nb_heads, self.head_size))  # [B, N, nb_heads, hidden_dim/nb_heads]
         gkt_values_source = jnp.take_along_axis(arr=gkt_values,
-                                                indices=dfa_utils.dim_expand_to(gkt_source_indices, gkt_values),
+                                                indices=new_dfa_utils.dim_expand_to(gkt_source_indices, gkt_values),
                                                 axis=1)  # [B, E_gkt, nb_heads, hidden_dim/nb_heads]
 
         ret = jnp.expand_dims(gkt_coefs, axis=-1) * gkt_values_source

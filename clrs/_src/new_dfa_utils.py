@@ -343,7 +343,6 @@ class SampleLoader:
                 # [num_pp, selected_num_ip]
                 kill_vectors = np.zeros((num_pp, self.selected_num_ip))
                 # [num_pp, selected_num_ip]
-                print(f'new_dfa_utils line 346, gen.shape={gen_vectors.shape}; kill.shape={gen_vectors.shape}')
                 return gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
                                                                             if_forward=True if task_name == 'dominance' else False)
             else:
@@ -454,11 +453,11 @@ def _derive_bidirectional_cfg(cfg_indices, if_forward):
     num_cfg_edges = cfg_indices.shape[0]
     dual_cfg_indices = cfg_indices[:, [1, 0]]
     cfg_edges_forward = np.concatenate([cfg_indices if if_forward else dual_cfg_indices,
-                                        np.ones((num_cfg_edges, 1))],
+                                        np.ones((num_cfg_edges, 1), dtype=int)],
                                        axis=1)
     # [num_cfg, 3]
     cfg_edges_backward = np.concatenate([cfg_indices if not if_forward else dual_cfg_indices,
-                                         np.zeros((num_cfg_edges, 1))],
+                                         np.zeros((num_cfg_edges, 1), dtype=int)],
                                         axis=1)
     return np.concatenate([cfg_edges_forward, cfg_edges_backward], axis=0)
 

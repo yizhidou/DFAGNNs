@@ -41,7 +41,7 @@ print('doudou_test line 37 dfa_baseline_model __init__ done!')
 dfa_baseline_model.init(features=next(train_feedback_generator).features,
                         seed=params_dict['task']['seed'])
 print('doudou_test line 47 dfa_baseline_model init done!')
-exit(666)
+# exit(666)
 epoch_idx = 0
 while epoch_idx < params_dict['task']['nb_epochs']:
     # validate

@@ -72,7 +72,7 @@ class DFASampler(samplers.Sampler):
             else:
                 sample_id = self._sample_data(*args, **kwargs)
             # sample_id = 'poj104_103.12489.6'
-            print(f'{sample_id} has been sampled... (dfa_sampler)')
+            print(f'{sample_id} has been sampled...(new_dfa_samplers line 75)')
             try:
                 if self.sample_loader.if_dfa:
                     edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, self.task_name)
@@ -85,7 +85,7 @@ class DFASampler(samplers.Sampler):
                 else:
                     print(err)
                     return
-            print(f'{sample_id} succeed~~~ (sampler line 92)')
+            print(f'{sample_id} succeed~~~ (new_dfa_sampler line 92)')
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
             mask_dict_list.append(mask_dict)
@@ -150,7 +150,7 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     assert ioh_dp_list_list
     for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
         for dp_idx, dp in enumerate(dp_list_one_sample):
-            print(f'new_dfa_sampler line 153, {dp.name}: {dp.data.shape}')
+            # print(f'new_dfa_sampler line 153, {dp.name}: {dp.data.shape}')
             if dp.name == 'trace_h':
                 assert dp.data.shape[1] == 1
                 concat_dim = 1

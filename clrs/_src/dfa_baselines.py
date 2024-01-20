@@ -59,24 +59,22 @@ class DFABaselineModel(model.Model):
 
     def __init__(
             self,
+            processor_factory: new_dfa_processors.DFAProcessorFactory,
             spec: Union[_Spec, List[_Spec]],
             # dummy_trajectory: Union[List[_Feedback], _Feedback],
-            processor_factory: new_dfa_processors.DFAProcessorFactory,
-            hidden_dim: int = 32,
-            encode_hints: bool = False,
-            decode_hints: bool = True,
+            hidden_dim: int,
+            encode_hints: bool,
+            decode_hints: bool,
+            use_lstm: bool,
+            dropout_prob: float,
+            hint_teacher_forcing: float,
+            hint_repred_mode: str,
+            learning_rate: float,
+            grad_clip_max_norm: float,
+            checkpoint_path: str,
+            freeze_processor: bool,
             encoder_init: str = 'default',
-            use_lstm: bool = False,
-            dropout_prob: float = 0.0,
-            hint_teacher_forcing: float = 0.0,
-            hint_repred_mode: str = 'soft',
-            name: str = 'dfa_base_model',
-            # nb_msg_passing_steps: int = 1,
-            learning_rate: float = 0.005,  #
-            grad_clip_max_norm: float = 0.0,  #
-            checkpoint_path: str = '/tmp/clrs3',  #
-            freeze_processor: bool = False,  #
-    ):
+            name: str = 'dfa_base_model'):
         """Constructor for BaselineModel.
 
         The model consists of encoders, processor and decoders. It can train
@@ -180,7 +178,6 @@ class DFABaselineModel(model.Model):
                                                                              algorithm_index,
                                                                              return_hints,
                                                                              return_all_outputs)
-
         # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)
         pmap_args = dict(axis_name='batch', devices=jax.local_devices())
