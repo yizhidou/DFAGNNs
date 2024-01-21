@@ -1,6 +1,6 @@
 from clrs._src import samplers
 from clrs._src import algorithms
-from clrs._src import new_dfa_utils
+from clrs._src import dfa_utils
 from clrs._src import specs, dfa_specs
 from clrs._src import probing
 from typing import List, Optional, Tuple
@@ -31,7 +31,7 @@ class DFASampler(samplers.Sampler):
                  task_name: str,
                  sample_id_list: List[str],
                  seed: int,
-                 sample_loader: new_dfa_utils.SampleLoader
+                 sample_loader: dfa_utils.SampleLoader
                  ):
         self.sample_id_list = sample_id_list
         self.task_name = task_name
@@ -72,20 +72,20 @@ class DFASampler(samplers.Sampler):
             else:
                 sample_id = self._sample_data(*args, **kwargs)
             # sample_id = 'poj104_103.12489.6'
-            print(f'{sample_id} has been sampled...(new_dfa_samplers line 75)')
+            print(f'{sample_id} has been sampled...(dfa_samplers line 75)')
             try:
                 if self.sample_loader.if_dfa:
                     edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, self.task_name)
                 else:
                     edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, self.task_name)
             except probing.ProbeError as err:
-                if isinstance(err, new_dfa_utils.DFAException):
+                if isinstance(err, dfa_utils.DFAException):
                     print(f'{sample_id} errored!!! error_code: {err.error_code} (dfa_sampler)')
                     continue
                 else:
                     print(err)
                     return
-            print(f'{sample_id} succeed~~~ (new_dfa_sampler line 92)')
+            print(f'{sample_id} succeed~~~ (dfa_sampler line 92)')
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
             mask_dict_list.append(mask_dict)
@@ -150,7 +150,7 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     assert ioh_dp_list_list
     for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
         for dp_idx, dp in enumerate(dp_list_one_sample):
-            # print(f'new_dfa_sampler line 153, {dp.name}: {dp.data.shape}')
+            # print(f'dfa_sampler line 153, {dp.name}: {dp.data.shape}')
             if dp.name == 'trace_h':
                 assert dp.data.shape[1] == 1
                 concat_dim = 1
@@ -165,12 +165,12 @@ def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
 def build_dfa_sampler(task_name: str,
                       sample_id_list: List[str],
                       seed: int,
-                      sample_loader: new_dfa_utils.SampleLoader
+                      sample_loader: dfa_utils.SampleLoader
                       ) -> Tuple[DFASampler, Spec]:
     """Builds a sampler. See `Sampler` documentation."""
 
     assert task_name in ['liveness', 'dominance', 'reachability']
-    print(f'new_dfa_sampler line 171 if_dfa = {sample_loader.if_dfa}')
+    print(f'dfa_sampler line 171 if_dfa = {sample_loader.if_dfa}')
     if sample_loader.if_dfa:
         spec = dfa_specs.DFASPECS['dfa']
     else:

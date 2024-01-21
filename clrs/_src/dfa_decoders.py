@@ -1,15 +1,10 @@
-from typing import Dict, Optional
-from clrs._src import decoders
 from clrs._src import specs
 from clrs._src import dfa_utils
 
 import chex
-import haiku as hk
-import jax
 import jax.numpy as jnp
 
 _chex_Array = chex.Array
-# _DataPoint = yzd_probing.DataPoint
 _Location = specs.Location
 _Spec = specs.Spec
 _Stage = specs.Stage

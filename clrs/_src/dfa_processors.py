@@ -24,17 +24,10 @@ class DFAProcessor(hk.Module):
         super().__init__(name=name)
 
     @abc.abstractmethod
-    def __call__(
-            self,
-            node_fts: _chex_Array,
-            hidden: _chex_Array,
-            cfg_indices_padded: _chex_Array,
-            gkt_indices_padded: _chex_Array,
-            gkt_edge_fts: Union[_chex_Array, None] = None,
-            gen_dp_data: Union[_chex_Array, None] = None,
-            kill_dp_data: Union[_chex_Array, None] = None,
-            trace_h_i_dp_data: Union[_chex_Array, None] = None
-    ) -> Tuple[_chex_Array, Optional[_chex_Array]]:
+    def __call__(self,
+                 hidden: _chex_Array,
+                 *args,
+                 **kwargs):
         """Processor inference step.
 
         Returns:
@@ -42,6 +35,61 @@ class DFAProcessor(hk.Module):
           embeddings. The edge embeddings can be None.
         """
         pass
+
+
+class AlignGNN(DFAProcessor):
+    def __init__(self,
+                 out_size: int,
+                 name: str = 'gnn_align',
+                 ):
+        super().__init__(name=name)
+        self.out_size = out_size
+
+    def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
+            self,
+            hidden: _chex_Array,  # [B, N， m, hidden_dim]
+            cfg_indices_padded: _chex_Array,  # [B, E, 2]
+            node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+            edge_fts: _chex_Array,  # [B, E, hidden_dim]    cfg_edge
+    ):
+        nb_nodes = node_fts.shape[1]
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        # node_fts||hidden -> nh_fts
+        node_hidden_fts = jnp.concatenate([node_fts, hidden], axis=-1)  # [B, N*m, 2*hidden_dim]
+        # [B, N， m, 2*hidden_dim]
+        fuse_nh_linear = hk.Linear(self.out_size)
+        # inject gen/kill/trace_i info into hidden
+        nh_fts = fuse_nh_linear(node_hidden_fts)
+        # [B, N, m, out_size]
+        nh_values = jnp.take_along_axis(arr=nh_fts,  # [B, N, m, out_size]
+                                        indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fts),
+                                        # [B, E, 1, 1]
+                                        axis=1)
+        # [B, E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, E, hidden_dim] -> [B, E, 1]
+        filtered_nh_values = jnp.expand_dims(edge_coeff, axis=-1) * nh_values
+
+        # [B, E, 1, 1] * [B, E, m, hidden_dim] -> [B, E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_max_batched(data,  # [E, m, hidden_dim]
+                                 segment_ids  # [E, ]
+                                 ):
+            return jax.ops.segment_sum(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes)
+
+        updated_bits = _segment_max_batched(data=filtered_nh_values,  # [B, E, m, hidden_dim]
+                                            segment_ids=edge_indices_target)
+        # [B, N, m, hidden_dim]
+        return updated_bits
+
 
 class GATSparse(DFAProcessor):
     def __init__(
@@ -244,194 +292,28 @@ def unsorted_segment_softmax(logits,  # [E, nb_heads]
     return probs
 
 
-# class DAFPGN(DFAProcessor):
-#     def __init__(
-#             self,
-#             out_size: int,
-#             mid_size: Optional[int] = None,
-#             mid_act: Optional[_Fn] = None,
-#             activation: Optional[_Fn] = jax.nn.relu,
-#             reduction: _Fn = jnp.max,
-#             msgs_mlp_sizes: Optional[List[int]] = None,
-#             use_ln: bool = False,
-#             use_triplets: bool = False,
-#             nb_triplet_fts: int = 8,
-#             gated: bool = False,
-#             name: str = 'mpnn_aggr',
-#     ):
-#         super().__init__(name=name)
-#         if mid_size is None:
-#             self.mid_size = out_size
-#         else:
-#             self.mid_size = mid_size
-#         self.out_size = out_size
-#         self.mid_act = mid_act
-#         self.activation = activation
-#         self.reduction = reduction
-#         self._msgs_mlp_sizes = msgs_mlp_sizes
-#         self.use_ln = use_ln
-#         self.use_triplets = use_triplets
-#         self.nb_triplet_fts = nb_triplet_fts
-#         self.gated = gated
-#
-#     def __call__(self,
-#                  node_fts: _chex_Array,  # [N, hidden_dim]
-#                  gkt_edge_fts: _chex_Array,  # [E_gkt, hidden_dim]
-#                  hidden: _chex_Array,  # [N, hidden_dim]
-#                  cfg_indices_padded: _chex_Array,  # [E_cfg, 2]
-#                  gkt_indices_padded: _chex_Array,  # [E_gkt, 2]
-#                  ):
-#         """MPNN inference step."""
-#
-#         nb_nodes_padded = node_fts.shape[0]
-#         nb_cfg_edges_padded, nb_gkt_edges_padded = cfg_indices_padded.shape[0], gkt_indices_padded.shape[0]
-#
-#         z = jnp.concatenate([node_fts, hidden], axis=-1)  # [N, 2 * hidden_dim]
-#         m_1 = hk.Linear(self.mid_size)
-#         m_2 = hk.Linear(self.mid_size)
-#         m_e = hk.Linear(self.mid_size)
-#         m_g = hk.Linear(self.mid_size)
-#
-#         msg_1 = m_1(z)  # [N, mid_size]
-#         msg_2 = m_2(z)  # [N, mid_size]
-#         msg_e = m_e(edge_fts)  # [E, mide_size]
-#         msg_g = m_g(graph_fts)  # [B, mide_size]
-#
-#         tri_msgs = None
-#
-#         if self.use_triplets:
-#             # Triplet messages, as done by Dudzik and Velickovic (2022)
-#             triplets = get_triplet_msgs(z, edge_fts, graph_fts, self.nb_triplet_fts)
-#
-#             o3 = hk.Linear(self.out_size)
-#             tri_msgs = o3(jnp.max(triplets, axis=1))  # (B, N, N, H)
-#
-#             if self.activation is not None:
-#                 tri_msgs = self.activation(tri_msgs)
-#
-#         # msgs = (
-#         #         jnp.expand_dims(msg_1, axis=1) + jnp.expand_dims(msg_2, axis=2) +
-#         #         msg_e + jnp.expand_dims(msg_g, axis=(1, 2)))  # [B, N, N, mide_size]
-#         msgs = (msg_1[row_indices] +  # [E, mide_size]
-#                 msg_2[col_indices] +  # [E, mide_size]
-#                 msg_e +
-#                 jnp.repeat(a=msg_g,
-#                            repeats=nb_edges_each_graph, axis=0))  # [E, mide_size]
-#
-#         if self._msgs_mlp_sizes is not None:
-#             msgs = hk.nets.MLP(self._msgs_mlp_sizes)(jax.nn.relu(msgs))
-#
-#         if self.mid_act is not None:
-#             msgs = self.mid_act(msgs)
-#
-#         if self.reduction == jnp.mean:
-#             # adj_mat.shape = [B, N, N]
-#             # msgs = jnp.sum(msgs * jnp.expand_dims(adj_mat, -1), axis=1)  # [B, N, H]
-#             # msgs = msgs / jnp.sum(adj_mat, axis=-1, keepdims=True)
-#             msgs = jax.ops.segment_sum(data=msgs,
-#                                        segment_ids=row_indices,
-#                                        num_segments=nb_nodes)  # [N, mid_size]
-#             d = jax.ops.segment_sum(data=np.ones_like(col_indices),
-#                                     segment_ids=col_indices,
-#                                     num_segments=nb_nodes)  # [N, ]
-#             msgs = msgs / jnp.expand_dims(d, axis=-1)
-#
-#         elif self.reduction == jnp.max:
-#             # maxarg = jnp.where(jnp.expand_dims(adj_mat, -1),
-#             #                    msgs,
-#             #                    -BIG_NUMBER)     # [B, N, N, H]
-#             # msgs = jnp.max(maxarg, axis=1)
-#             msgs = jax.ops.segment_max(data=msgs,
-#                                        segment_ids=col_indices,
-#                                        num_segments=nb_nodes)  # [N, mid_size]
-#         else:
-#             raise Exception('Unrecognized reduction!')
-#
-#         o1 = hk.Linear(self.out_size)
-#         o2 = hk.Linear(self.out_size)
-#         h_1 = o1(z)  # [N, out_size]
-#         h_2 = o2(msgs)  # [N, out_size]
-#
-#         ret = h_1 + h_2  # [N, out_size]
-#
-#         if self.activation is not None:
-#             ret = self.activation(ret)
-#
-#         if self.use_ln:
-#             ln = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)
-#             ret = ln(ret)
-#
-#         if self.gated:
-#             gate1 = hk.Linear(self.out_size)
-#             gate2 = hk.Linear(self.out_size)
-#             gate3 = hk.Linear(self.out_size, b_init=hk.initializers.Constant(-3))
-#             gate = jax.nn.sigmoid(gate3(jax.nn.relu(gate1(z) + gate2(msgs))))
-#             ret = ret * gate + hidden * (1 - gate)
-#
-#         return ret, tri_msgs  # pytype: disable=bad-return-type  # numpy-scalars
-#
-#
-# def get_triplet_msgs_sparse(z,  # [N, 2 * hidden_dim]
-#                             edge_fts,  # [E, hidden_dim]
-#                             graph_fts,  # [B, hidden_dim]
-#                             row_indices,  # [E, ]
-#                             col_indices,  # [E, ]
-#                             nb_triplet_fts):
-#     """Triplet messages, as done by Dudzik and Velickovic (2022). sparse version"""
-#     t_1 = hk.Linear(nb_triplet_fts)
-#     t_2 = hk.Linear(nb_triplet_fts)
-#     t_3 = hk.Linear(nb_triplet_fts)
-#     t_e_1 = hk.Linear(nb_triplet_fts)
-#     t_e_2 = hk.Linear(nb_triplet_fts)
-#     t_e_3 = hk.Linear(nb_triplet_fts)
-#     t_g = hk.Linear(nb_triplet_fts)
-#
-#     tri_1 = t_1(z)  # [N, ntf]
-#     tri_2 = t_2(z)
-#     tri_3 = t_3(z)
-#     tri_e_1 = t_e_1(edge_fts)
-#     tri_e_2 = t_e_2(edge_fts)
-#     tri_e_3 = t_e_3(edge_fts)
-#     tri_g = t_g(graph_fts)
-#
-#     return (
-#             jnp.expand_dims(tri_1, axis=(2, 3)) +  # (B, N, 1, 1, H)
-#             jnp.expand_dims(tri_2, axis=(1, 3)) +  # + (B, 1, N, 1, H)
-#             jnp.expand_dims(tri_3, axis=(1, 2)) +  # + (B, 1, 1, N, H)
-#             jnp.expand_dims(tri_e_1, axis=3) +  # + (B, N, N, 1, H)
-#             jnp.expand_dims(tri_e_2, axis=2) +  # + (B, N, 1, N, H)
-#             jnp.expand_dims(tri_e_3, axis=1) +  # + (B, 1, N, N, H)
-#             jnp.expand_dims(tri_g, axis=(1, 2, 3))  # + (B, 1, 1, 1, H)
-#     )
-
-
 DFAProcessorFactory = Callable[[int], DFAProcessor]
 
 
 def get_dfa_processor_factory(kind: str,
-                              nb_heads: int,
-                              activation: Optional[_Fn],
-                              residual: bool,
-                              use_ln: bool) -> DFAProcessorFactory:
+                              *args,
+                              **kwargs) -> DFAProcessorFactory:
     """Returns a processor factory.
 
     Args:
       kind: One of the available types of processor.
-      use_ln: Whether the processor passes the output through a layernorm layer.
-      nb_triplet_fts: How many triplet features to compute.
-      nb_heads: Number of attention heads for GAT processors.
     Returns:
       A callable that takes an `out_size` parameter (equal to the hidden
       dimension of the network) and returns a processor instance.
     """
 
     def _dfa_factory(out_size: int):
-        if kind == 'dfa_gat':
+        if kind == 'gnn_align':
+            processor = AlignGNN(out_size=out_size)
+        elif kind == 'dfa_gat':
             processor = GATSparse(out_size=out_size,
-                                  nb_heads=nb_heads,
-                                  activation=activation,
-                                  residual=residual,
-                                  use_ln=use_ln)
+                                  *args,
+                                  **kwargs)
         else:
             raise ValueError('Unexpected processor kind ' + kind)
 

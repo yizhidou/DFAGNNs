@@ -4,21 +4,22 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import chex
 
-from clrs._src import decoders, dfa_decoders
+from clrs._src import dfa_decoders
 from clrs._src import encoders
 from clrs._src import probing
-from clrs._src import dfa_processors
-from clrs._src import samplers, dfa_sampler
-from clrs._src import specs, yzd_specs
+from clrs._src import dfa_processors, dfa_utils
+from clrs._src import samplers, dfa_samplers
+from clrs._src import specs
 from clrs._src import nets
 
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import abc
 
 _chex_Array = chex.Array
 # _DataPoint = probing.DataPoint
-_Features = dfa_sampler.Features
+_Features = dfa_samplers.Features
 _Location = specs.Location
 _Spec = specs.Spec
 _Stage = specs.Stage
@@ -48,13 +49,15 @@ class DFANet(nets.Net):
             encoder_init: str,
             dropout_prob: float,
             hint_teacher_forcing: float,
-            nb_msg_passing_steps,
-            hint_repred_mode='soft',
+            # nb_msg_passing_steps = 1,
+            hint_repred_mode: str,
+            if_dfa=True,
             # nb_dims=None,
             name: str = 'dfa_net',
     ):
         print('dfa_nets line 56, in dfa_nets.__init__')
         """Constructs a `Net`."""
+        self.if_dfa = if_dfa
         super().__init__(spec=spec,
                          hidden_dim=hidden_dim,
                          encode_hints=encode_hints,
@@ -66,14 +69,14 @@ class DFANet(nets.Net):
                          hint_teacher_forcing=hint_teacher_forcing,
                          hint_repred_mode=hint_repred_mode,
                          nb_dims=None,
-                         nb_msg_passing_steps=nb_msg_passing_steps,
+                         nb_msg_passing_steps=1,
                          name=name)
 
     def __call__(self, features_list: List[_Features],
                  repred: bool,
                  algorithm_index: int,
                  return_hints: bool,
-                 return_all_outputs: bool):
+                 return_all_outputs: bool = False):
         """Process one batch of data.
 
         Args:
@@ -127,23 +130,32 @@ class DFANet(nets.Net):
             trace_h = features.trace_h
             padded_edge_indices_dict = features.padded_edge_indices_dict
             hint_len = features.mask_dict['hint_len']
-
-            batch_size, nb_nodes_padded, nb_gkt_edges_padded = _dfa_data_dimensions(features)
-
             nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
-            hiddens = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-            # print(f'dfa_nets line 135, in dfa_nets.__call__, nb_mp_steps = {nb_mp_steps}')  # checked
-            if self.use_lstm:
-                lstm_state = lstm_init(batch_size=batch_size * nb_nodes_padded)
+
+            batch_size, node_fts_shape_lead, nb_edges_padded = _dfa_data_dimensions(if_dfa=self.if_dfa,
+                                                                                    features=features)
+            # if this is the dfa algorithm, node_fts_shape_lead=(nb_nodes, nb_bits_each);
+            # otherwise, node_fts_shape_lead=(nb_nodes, ).
+
+            print(f'dfa_nets line 135, in dfa_nets.__call__, nb_mp_steps = {nb_mp_steps}')  # checked
+            if self.use_lstm and self.if_dfa:
+                nb_nodes, nb_bits_each = node_fts_shape_lead
+                lstm_state = lstm_init(batch_size=batch_size * nb_nodes * nb_bits_each)
                 lstm_state = jax.tree_util.tree_map(
-                    lambda x, b=batch_size, n=nb_nodes_padded: jnp.reshape(x, [b, n, -1]),
+                    lambda x, b=batch_size, n=nb_nodes, m=nb_bits_each: jnp.reshape(x, [b, n, m, -1]),
                     lstm_state)
                 # print(
                 #     f'dfa_nets line 141, in dfa_nets.__call lstm_hidden: {lstm_state.hidden.shape}; lstm_cell: {lstm_state.cell.shape}')
             #     [B, N, hidden_dim], [B, N, hidden_dim]
+            elif self.use_lstm and not self.if_dfa:
+                nb_nodes = node_fts_shape_lead[0]
+                lstm_state = lstm_init(batch_size=batch_size * nb_nodes)
+                lstm_state = jax.tree_util.tree_map(
+                    lambda x, b=batch_size, n=nb_nodes: jnp.reshape(x, [b, n, -1]),
+                    lstm_state)
             else:
                 lstm_state = None
-
+            hiddens = jnp.zeros((batch_size,) + node_fts_shape_lead + (self.hidden_dim,))
             mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
                 pred_trace_h_i=None,
                 pred_trace_o=None,
@@ -153,12 +165,12 @@ class DFANet(nets.Net):
             # Do the first step outside of the scan because it has a different
             # computation graph.
             common_args = dict(
+                hint_len=hint_len,
                 input_dp_list=input_dp_list,
                 trace_h=trace_h,
-                hint_len=hint_len,
                 batch_size=batch_size,
-                nb_nodes_padded=nb_nodes_padded,
-                nb_gkt_edges_padded=nb_gkt_edges_padded,
+                node_fts_shape_lead=node_fts_shape_lead,
+                nb_edges_padded=nb_edges_padded,
                 padded_edge_indices_dict=padded_edge_indices_dict,
                 encs=self.encoders[algorithm_index],
                 decs=self.decoders[algorithm_index],
@@ -172,22 +184,24 @@ class DFANet(nets.Net):
                 first_step=True,
                 **common_args
             )
-            print('dfa_nets line 175, in dfa_nets.__call__, the **first** call of _dfa_msg_passing_step is done:')
-            print(
-                f'mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}; mp_state.pred_trace_h_i: {mp_state.pred_trace_h_i.shape}')
-            if return_hints:
-                print('since return_hint is True:')
-                print(f'lean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
-            else:
-                print('return_hint is False: ')
-                print(f'lean_mp_state.pred_trace_h_i = {lean_mp_state.pred_trace_h_i}')
-            if return_all_outputs:
-                print('since return_all_output is True:')
-                print(f'lean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
-            else:
-                print('return_all_output is False')
-                print(f'lean_mp_state.pred_trace_o = {lean_mp_state.pred_trace_o}')
-            # Then scan through the rest.
+            # # \begin{commit_1}
+            # print('dfa_nets line 188, in dfa_nets.__call__, the **first** call of _dfa_msg_passing_step is done:')
+            # print(
+            #     f'mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}; mp_state.pred_trace_h_i: {mp_state.pred_trace_h_i.shape}')
+            # if return_hints:
+            #     print('since return_hint is True:')
+            #     print(f'lean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
+            # else:
+            #     print('return_hint is False: ')
+            #     print(f'lean_mp_state.pred_trace_h_i = {lean_mp_state.pred_trace_h_i}')
+            # if return_all_outputs:
+            #     print('since return_all_output is True:')
+            #     print(f'lean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
+            # else:
+            #     print('return_all_output is False')
+            #     print(f'lean_mp_state.pred_trace_o = {lean_mp_state.pred_trace_o}')
+            # # \end{commit_1}
+            # # Then scan through the rest.
             scan_fn = functools.partial(
                 self._dfa_msg_passing_step,
                 first_step=False,
@@ -198,21 +212,23 @@ class DFANet(nets.Net):
                 mp_state,
                 jnp.arange(nb_mp_steps - 1) + 1,
                 length=nb_mp_steps - 1)
-            print('dfa_nets line 200, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
-            print(
-                f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
-            if return_hints:
-                print('since return_hint is True:')
-                print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
-            else:
-                print('return_hint is False: ')
-                print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
-            if return_all_outputs:
-                print('since return_all_output is True:')
-                print(f'accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
-            else:
-                print('return_all_output is False')
-                print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
+            # # \begin{commit_2}
+            # print('dfa_nets line 200, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
+            # print(
+            #     f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+            # if return_hints:
+            #     print('since return_hint is True:')
+            #     print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
+            # else:
+            #     print('return_hint is False: ')
+            #     print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
+            # if return_all_outputs:
+            #     print('since return_all_output is True:')
+            #     print(f'accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
+            # else:
+            #     print('return_all_output is False')
+            #     print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
+            # # \end{commit_2}
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
@@ -238,17 +254,11 @@ class DFANet(nets.Net):
             print('since return_all_output is False')
             print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
 
-        def invert(d):
-            """Dict of lists -> list of dicts."""
-            if d:
-                return [dict(zip(d, i)) for i in zip(*d.values())]
-
         if return_all_outputs:
             pred_trace_o = jnp.stack(accum_mp_state.pred_trace_o)
             print('since return_all_output=True,')
             print(
                 f'dfa_nets line 242, in dfa_nets.__call__, after stack, accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
-        #     YZDTODO 所以这个stack有啥用呢？？哦哦...可能是把所有的hints给stack到一起...
         else:
             pred_trace_o = output_mp_state.pred_trace_o
         # hint_preds = invert(accum_mp_state.hint_preds)
@@ -258,12 +268,12 @@ class DFANet(nets.Net):
     def _dfa_msg_passing_step(self,
                               mp_state: _MessagePassingScanState,
                               i: int,
+                              hint_len: _chex_Array,
                               input_dp_list: _Trajectory,
                               trace_h: probing.DataPoint,
-                              hint_len: _chex_Array,
                               batch_size: int,
-                              nb_nodes_padded: int,
-                              nb_gkt_edges_padded: int,
+                              node_fts_shape_lead: Tuple[int],
+                              nb_edges_padded: int,
                               padded_edge_indices_dict: Dict[str, _chex_Array],
                               encs: Dict[str, List[hk.Module]],
                               decs: Dict[str, Tuple[hk.Module]],
@@ -281,12 +291,12 @@ class DFANet(nets.Net):
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))
             if hard_postprocess:
                 decoded_trace_h_i = probing.DataPoint(name='trace_h',
-                                                      location=specs.Location.EDGE,
+                                                      location=specs.Location.NODE if self.if_dfa else specs.Location.EDGE,
                                                       type_=specs.Type.MASK,
                                                       data=(mp_state.pred_trace_h_i > 0.0) * 1.0)
             else:
                 decoded_trace_h_i = probing.DataPoint(name='trace_h',
-                                                      location=specs.Location.EDGE,
+                                                      location=specs.Location.NODE if self.if_dfa else specs.Location.EDGE,
                                                       type_=specs.Type.MASK,
                                                       data=jax.nn.sigmoid(mp_state.pred_trace_h_i))
             if repred:
@@ -295,22 +305,25 @@ class DFANet(nets.Net):
                 force_mask = jax.random.bernoulli(
                     hk.next_rng_key(), self._hint_teacher_forcing,
                     (batch_size,))
+                print(
+                    f'dfa_nets line 308, force_mask: {force_mask.shape}; trace_h_i: {trace_h_i.data.shape}; decoded_trace_h_i: {decoded_trace_h_i.data.shape}')
                 # force_mask = jnp.repeat(force_mask, nb_gkt_edges)
-                force_masked_data = jnp.where(jnp.expand_dims(force_mask, axis=-1),
+                force_masked_data = jnp.where(dfa_utils.dim_expand_to(force_mask, trace_h_i.data),
                                               trace_h_i.data,
                                               decoded_trace_h_i.data)
+                print('dfa_nets line 314 all good')
                 trace_h_i = probing.DataPoint(name='trace_h',
-                                              location=specs.Location.EDGE,
+                                              location=specs.Location.NODE if self.if_dfa else specs.Location.EDGE,
                                               type_=specs.Type.MASK,
                                               data=force_masked_data)
 
         hiddens, pred_trace_o_cand, hint_preds, lstm_state = self._dfa_one_step_pred(
+            hidden=mp_state.hiddens,
             input_dp_list=input_dp_list,
             trace_h_i=trace_h_i,
-            hidden=mp_state.hiddens,
             batch_size=batch_size,
-            nb_nodes_padded=nb_nodes_padded,
-            nb_gkt_edges_padded=nb_gkt_edges_padded,
+            node_fts_shape_lead=node_fts_shape_lead,
+            nb_edges_padded=nb_edges_padded,
             padded_edge_indices_dict=padded_edge_indices_dict,
             lstm_state=mp_state.lstm_state,
             encs=encs,
@@ -343,26 +356,43 @@ class DFANet(nets.Net):
         # the second value is the output that will be stacked over steps.
         return new_mp_state, accum_mp_state
 
-    def _dfa_one_step_pred(
-            self,
-            hidden: _chex_Array,
-            input_dp_list: _Trajectory,
-            trace_h_i: probing.DataPoint,
-            batch_size: int,
-            nb_nodes_padded: int,
-            nb_gkt_edges_padded: int,
-            padded_edge_indices_dict: Dict[str, _chex_Array],
-            lstm_state: Optional[hk.LSTMState],
-            encs: Dict[str, List[hk.Module]],
-            decs: Dict[str, Tuple[hk.Module]],
-            repred: bool,
-            first_step: bool
-    ):
-        """Generates one-step predictions."""
-        print(f'dfa_nets line 351, in dfa_nets._dfa_one_step_pred')
-        # Initialise empty node/edge/graph features and adjacency matrix.
-        node_fts = jnp.zeros((batch_size, nb_nodes_padded, self.hidden_dim))
-        gkt_edge_fts = jnp.zeros((batch_size, nb_gkt_edges_padded, self.hidden_dim))
+    @abc.abstractmethod
+    def _dfa_one_step_pred(self,
+                           hidden: _chex_Array,
+                           input_dp_list: _Trajectory,
+                           trace_h_i: probing.DataPoint,
+                           batch_size: int,
+                           node_fts_shape_lead: Tuple[int],
+                           nb_edges_padded: int,
+                           padded_edge_indices_dict: Dict[str, _chex_Array],  # only cfg edges
+                           lstm_state: Optional[hk.LSTMState],
+                           encs: Dict[str, List[hk.Module]],
+                           decs: Dict[str, Tuple[hk.Module]],
+                           repred: bool,
+                           first_step: bool
+                           ):
+        pass
+
+
+class DFANet_v1(DFANet):
+    # the old version
+    def _dfa_one_step_pred(self,
+                           hidden: _chex_Array,
+                           input_dp_list: _Trajectory,
+                           trace_h_i: probing.DataPoint,
+                           batch_size: int,
+                           node_fts_shape_lead: Tuple[int],
+                           nb_edges_padded: int,  # gkt edges
+                           padded_edge_indices_dict: Dict[str, _chex_Array],  # only cfg edges
+                           lstm_state: Optional[hk.LSTMState],
+                           encs: Dict[str, List[hk.Module]],
+                           decs: Dict[str, Tuple[hk.Module]],
+                           repred: bool,
+                           first_step: bool
+                           ):
+        nb_nodes = node_fts_shape_lead[0]
+        node_fts = jnp.zeros((batch_size, nb_nodes, self.hidden_dim))
+        gkt_edge_fts = jnp.zeros((batch_size, nb_edges_padded, self.hidden_dim))
 
         # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Encode node/edge/graph features from inputs and (optionally) hints.
@@ -381,16 +411,13 @@ class DFANet(nets.Net):
         # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
         #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
-        nxt_hidden = hidden
-        nxt_edge = None
-        for _ in range(self.nb_msg_passing_steps):
-            nxt_hidden, nxt_edge = self.processor(
-                node_fts=node_fts,
-                gkt_edge_fts=gkt_edge_fts,
-                hidden=hidden,
-                cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
-                gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
-            )
+        nxt_hidden, nxt_edge = self.processor(
+            node_fts=node_fts,
+            gkt_edge_fts=gkt_edge_fts,
+            hidden=hidden,
+            cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'],
+            gkt_indices_padded=padded_edge_indices_dict['gkt_indices_padded'],
+        )
         if not repred:  # dropout only on training
             nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
 
@@ -420,38 +447,100 @@ class DFANet(nets.Net):
         # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
         return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
-def _dfa_data_dimensions(features: _Features) -> Tuple[int, int, int]:
+
+class DFANet_v2(DFANet):
+    def _dfa_one_step_pred(
+            self,
+            hidden: _chex_Array,
+            input_dp_list: _Trajectory,
+            trace_h_i: probing.DataPoint,
+            batch_size: int,
+            node_fts_shape_lead: Tuple[int],
+            nb_edges_padded: int,  # cfg edges
+            padded_edge_indices_dict: Dict[str, _chex_Array],  # only cfg edges
+            lstm_state: Optional[hk.LSTMState],
+            encs: Dict[str, List[hk.Module]],
+            decs: Dict[str, Tuple[hk.Module]],
+            repred: bool,
+            first_step: bool
+    ):
+        """Generates one-step predictions."""
+        print(f'dfa_nets line 468, in dfa_nets._dfa_one_step_pred')
+        # Initialise empty node/edge/graph features and adjacency matrix.
+        nb_nodes, nb_bits_each = node_fts_shape_lead
+        node_fts = jnp.zeros((batch_size, nb_nodes, nb_bits_each, self.hidden_dim))
+        cfg_edge_fts = jnp.zeros((batch_size, nb_edges_padded, self.hidden_dim))
+
+        # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Encode node/edge/graph features from inputs and (optionally) hints.
+        dp_list_to_encode = input_dp_list[:]
+        if self.encode_hints or first_step:
+            dp_list_to_encode.append(trace_h_i)
+        for dp in dp_list_to_encode:
+            encoder = encs[dp.name]
+            if dp.location == specs.Location.EDGE:
+                cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
+            if dp.location == specs.Location.NODE:
+                node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
+        # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # print('dfa_nets line 333, \ncfg_indices_padded: {}; \ngkt_indices_padded: {}'.format(   # checked [B, E, 2]
+        #     padded_edge_indices_dict['cfg_indices_padded'].shape, padded_edge_indices_dict['gkt_indices_padded'].shape))
+        nxt_hidden = self.processor(
+            node_fts=node_fts,
+            edge_fts=cfg_edge_fts,
+            hidden=hidden,
+            cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'])
+        if not repred:  # dropout only on training
+            nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
+
+        if self.use_lstm:
+            # lstm doesn't accept multiple batch dimensions (in our case, batch and
+            # nodes), so we vmap over the (first) batch dimension.
+            print(
+                f'dfa_nets line 495, nxt_hidden: {nxt_hidden.shape}; lstm.hidden: {lstm_state.hidden.shape}; lstm.cell: {lstm_state.cell.shape}')
+            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(inputs=nxt_hidden, prev_state=lstm_state)
+        else:
+            nxt_lstm_state = None
+        # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Decode features and (optionally) hints.
+        trace_h_decoder = decs['trace_h'][0]
+        trace_o_decoder = decs['trace_o'][0]
+        pred_trace_o = jnp.squeeze(trace_h_decoder(nxt_hidden), -1)
+        pred_trace_h_i = jnp.squeeze(trace_o_decoder(nxt_hidden), -1)
+        # print('dfa_nets line 408, in dfa_nets._dfa_one_step_pred, after prediction:')
+        # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
+        return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
+
+
+def _dfa_data_dimensions(if_dfa,
+                         features: _Features):
     """Returns (batch_size, nb_nodes)."""
     batch_size = None
     nb_nodes_padded = None
-    nb_gkt_edges_padded = None
-    for inp in features.input_dp_list:
-        if inp.name in ['pos', 'if_pp', 'if_ip']:
-            if batch_size is None:
-                batch_size, nb_nodes_padded = inp.data.shape[:2]
-            else:
-                assert inp.data.shape[:2] == (batch_size, nb_nodes_padded)
-        if inp.name in ['gen', 'kill', 'trace_o']:
-            if nb_gkt_edges_padded is None:
-                nb_gkt_edges_padded = inp.data.shape[1]
-            else:
-                assert inp.data.shape[:2] == (batch_size, nb_gkt_edges_padded)
+    nb_bits_each = None
+    nb_edges_padded = None
+    if if_dfa:
+        for inp in features.input_dp_list:
+            if inp.name in ['gen_vectors', 'kill_vectors', 'trace_o']:
+                # print(f'dfa_net line 519, {inp.name}: {inp.data.shape}')
+                if batch_size is None:
+                    batch_size, nb_nodes_padded, nb_bits_each = inp.data.shape
+                else:
+                    batch_size, nb_nodes_padded, nb_bits_each = inp.data.shape
+            if inp.name == 'cfg_edges':
+                nb_edges_padded = inp.data.shape[1]
+        return batch_size, (nb_nodes_padded, nb_bits_each), nb_edges_padded
+    else:
+        for inp in features.input_dp_list:
+            if inp.name in ['pos', 'if_pp', 'if_ip']:
+                if batch_size is None:
+                    batch_size, nb_nodes_padded = inp.data.shape[:2]
+                else:
+                    assert inp.data.shape[:2] == (batch_size, nb_nodes_padded)
+            if inp.name in ['gen', 'kill', 'trace_o']:
+                if nb_edges_padded is None:
+                    nb_edges_padded = inp.data.shape[1]
+                else:
+                    assert inp.data.shape[:2] == (batch_size, nb_edges_padded)
 
-    return batch_size, nb_nodes_padded, nb_gkt_edges_padded
-
-
-def _yzd_data_dimensions(features: _Features) -> Tuple[int, int, int]:
-    """Returns (batch_size, nb_nodes)."""
-    batch_size = None
-    nb_bits_padded = None
-    nb_cfg_edges_padded = None
-    for inp in features.input_dp_list:
-        if inp.name in ['gen_vectors', 'kill_vectors', 'trace_o']:
-            if batch_size is None:
-                batch_size, nb_bits_padded = inp.data.shape[:2]
-            else:
-                assert inp.data.shape[:2] == (batch_size, nb_bits_padded)
-        if inp.name == 'cfg_edges':
-            nb_cfg_edges_padded = inp.data.shape[1]
-            assert batch_size == inp.data.shape[0]
-    return batch_size, nb_bits_padded, nb_cfg_edges_padded
+        return batch_size, (nb_nodes_padded,), nb_edges_padded

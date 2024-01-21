@@ -23,31 +23,30 @@ from typing import Dict, List, Optional, Tuple, Union
 import chex
 
 from clrs._src import decoders
-from clrs._src import losses, dfa_losses
+from clrs._src import dfa_losses
 from clrs._src import model
-from clrs._src import new_dfa_nets
+from clrs._src import dfa_nets
 from clrs._src import probing
-from clrs._src import new_dfa_processors
-from clrs._src import new_dfa_samplers
+from clrs._src import dfa_processors
+from clrs._src import dfa_samplers
 from clrs._src import specs
 from clrs._src import baselines
 
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 
 _Array = chex.Array
 _DataPoint = probing.DataPoint
-_Features = new_dfa_samplers.Features
+_Features = dfa_samplers.Features
 # _FeaturesChunked = samplers.FeaturesChunked
-_Feedback = new_dfa_samplers.Feedback
+_Feedback = dfa_samplers.Feedback
 _Location = specs.Location
 _Seed = jnp.integer
 _Spec = specs.Spec
 _Stage = specs.Stage
-_Trajectory = new_dfa_samplers.Trajectory
+_Trajectory = dfa_samplers.Trajectory
 _Type = specs.Type
 _OutputClass = specs.OutputClass
 
@@ -59,7 +58,7 @@ class DFABaselineModel(model.Model):
 
     def __init__(
             self,
-            processor_factory: new_dfa_processors.DFAProcessorFactory,
+            processor_factory: dfa_processors.DFAProcessorFactory,
             spec: Union[_Spec, List[_Spec]],
             # dummy_trajectory: Union[List[_Feedback], _Feedback],
             hidden_dim: int,
@@ -150,7 +149,7 @@ class DFABaselineModel(model.Model):
 
     def _create_net_fns(self, hidden_dim: int,
                         encode_hints: bool,
-                        processor_factory: new_dfa_processors.DFAProcessorFactory,
+                        processor_factory: dfa_processors.DFAProcessorFactory,
                         use_lstm: bool,
                         encoder_init: str,
                         dropout_prob: float,
@@ -164,7 +163,7 @@ class DFABaselineModel(model.Model):
                      return_hints: bool,
                      return_all_outputs: bool):
             print('dfa_baselines line 168~ in _use_net')
-            return new_dfa_nets.DFANet_v2(spec=self._spec,
+            return dfa_nets.DFANet_v2(spec=self._spec,
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
