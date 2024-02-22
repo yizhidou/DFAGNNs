@@ -481,23 +481,33 @@ def _get_activation(activation_str):
 def parse_params(params_filepath: str):
     with open(params_filepath) as json_loader:
         params_dict = json.load(json_loader)
-
+    errored_sample_ids = {}
+    with open(params_dict['sample_path_processor']['errorlog_savepath']) as errored_sample_ids_loader:
+        for line in errored_sample_ids_loader.readlines():
+            errored_sample_id = line.split(':')[0].strip()
+            errored_sample_ids[errored_sample_id] = 1
     train_sample_id_list = []
     with open(params_dict['dfa_sampler']['train_sample_id_savepath']) as train_sample_reader:
         for line in train_sample_reader.readlines():
-            train_sample_id_list.append(line.strip())
+            sample_id = line.strip()
+            if not sample_id in errored_sample_ids:
+                train_sample_id_list.append(line.strip())
     params_dict['dfa_sampler']['train_sample_id_list'] = train_sample_id_list
     del params_dict['dfa_sampler']['train_sample_id_savepath']
     vali_sample_id_list = []
     with open(params_dict['dfa_sampler']['vali_sample_id_savepath']) as vali_sample_reader:
         for line in vali_sample_reader.readlines():
-            vali_sample_id_list.append(line.strip())
+            sample_id = line.strip()
+            if not sample_id in errored_sample_ids:
+                vali_sample_id_list.append(line.strip())
     params_dict['dfa_sampler']['vali_sample_id_list'] = vali_sample_id_list
     del params_dict['dfa_sampler']['vali_sample_id_savepath']
     test_sample_id_list = []
     with open(params_dict['dfa_sampler']['test_sample_id_savepath']) as test_sample_reader:
         for line in test_sample_reader.readlines():
-            test_sample_id_list.append(line.strip())
+            sample_id = line.strip()
+            if not sample_id in errored_sample_ids:
+                test_sample_id_list.append(line.strip())
     params_dict['dfa_sampler']['test_sample_id_list'] = test_sample_id_list
     del params_dict['dfa_sampler']['test_sample_id_savepath']
 

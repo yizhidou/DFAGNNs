@@ -223,7 +223,7 @@ def finalize_for_dfa(probes: _ProbesDict,
     mask_dict = dict(nb_nodes=nb_nodes,
                      nb_cfg_edges=nb_cfg_edges,
                      hint_len=hint_len)
-    print('dfa_probing line 126')
+    # print('dfa_probing line 226')
     # print(f'cfg_inidices_padded: \n{cfg_indices_padded}')
     # print(cfg_indices_padded) # checked~
     # print(f'gkt_indices_padded: \n{gkt_indices_padded}')
@@ -233,5 +233,5 @@ def finalize_for_dfa(probes: _ProbesDict,
     #     tmp = probes[specs.Stage.INPUT][specs.Location.EDGE]['kill']['data']
     #     print(f'kill_padded: \n{tmp}')
     # print(gkt_indices_padded)   # checked~
-    print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; hint_len: {hint_len}')
+    # print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; hint_len: {hint_len}')
     return edge_indices_dict, mask_dict

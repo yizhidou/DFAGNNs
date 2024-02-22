@@ -5,7 +5,7 @@ from clrs._src import specs, dfa_specs
 from clrs._src import probing
 from typing import List, Optional, Tuple
 from programl.proto import *
-import random
+# import random
 import numpy as np
 import jax
 import collections
@@ -30,16 +30,19 @@ class DFASampler(samplers.Sampler):
     def __init__(self,
                  task_name: str,
                  sample_id_list: List[str],
+                 num_samples: int,
                  seed: int,
                  sample_loader: dfa_utils.SampleLoader
                  ):
-        self.sample_id_list = sample_id_list
+        # self.sample_id_list = sample_id_list
+        self.seed = seed
         self.task_name = task_name
         self.sample_loader = sample_loader
         self.expected_hint_len = self.sample_loader.expected_hint_len
         self.max_num_pp = self.sample_loader.max_num_pp
-        random.seed(seed)
-        self._iter_sample_id_list = iter(self.sample_id_list)
+        # random.seed(seed)
+        self.sample_id_generator = self.SampleIdGenerator(sample_id_list=sample_id_list,
+                                                          num_samples=num_samples)
         algo = getattr(algorithms, 'dfa') if self.sample_loader.if_dfa else getattr(algorithms, task_name)
         samplers.Sampler.__init__(self,
                                   algorithm=algo,
@@ -50,7 +53,8 @@ class DFASampler(samplers.Sampler):
                                   if_estimate_max_step=False)
 
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
-        sample_id = random.choice(seq=self.sample_id_list)
+        # sample_id = random.choice(seq=self.sample_id_list)
+        sample_id = next(self.sample_id_generator)
         return sample_id
 
     def _make_batch(self, num_samples: int,
@@ -67,11 +71,11 @@ class DFASampler(samplers.Sampler):
 
         num_created_samples = 0
         while num_created_samples < num_samples:
-            if if_vali_or_test:
-                sample_id = next(self._iter_sample_id_list)
-            else:
-                sample_id = self._sample_data(*args, **kwargs)
-            # sample_id = 'poj104_103.12489.6'
+            # if if_vali_or_test:
+            #     sample_id = next(self._iter_sample_id_list)
+            # else:
+            #     sample_id = self._sample_data(*args, **kwargs)
+            sample_id = self._sample_data(*args, **kwargs)
             print(f'{sample_id} has been sampled...(dfa_samplers line 75)')
             try:
                 if self.sample_loader.if_dfa:
@@ -85,7 +89,7 @@ class DFASampler(samplers.Sampler):
                 else:
                     print(err)
                     return
-            print(f'{sample_id} succeed~~~ (dfa_sampler line 92)')
+            # print(f'{sample_id} succeed~~~ (dfa_sampler line 92)')
             num_created_samples += 1
             edge_indices_dict_list.append(edge_indices_dict)
             mask_dict_list.append(mask_dict)
@@ -138,12 +142,29 @@ class DFASampler(samplers.Sampler):
         batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
         # assert np.array_equal(lengths, sparse_lengths)
         assert len(batched_inp_dp_list) == 6 if self.task_name == 'dfa_liveness' else 5
-        print('~~~~~~~~~~ one batch has done! (sampler line 130) ~~~~~~~~~~')
+        # print('~~~~~~~~~~ one batch has done! (sampler line 130) ~~~~~~~~~~')
         return Feedback(features=Features(input_dp_list=batched_inp_dp_list,
                                           trace_h=batched_trace_h,
                                           padded_edge_indices_dict=batched_edge_indices_dict,
                                           mask_dict=batched_mask_dict),
                         trace_o=batched_trace_o)
+
+    def SampleIdGenerator(self,
+                          sample_id_list: List[str],
+                          num_samples: int):
+        if num_samples > 0:
+            counter = 0
+            while counter < num_samples:
+                # sample_id = random.choice(sample_id_list)
+                sample_id = self._rng.choice(sample_id_list)
+                # if counter < 10:
+                #     with open('/data_hdd/lx20/yzd_workspace/Datasets/Samples4Debug/first_sample_each_epoch', 'a') as d:
+                #         d.write(f'{self.seed}: {sample_id}\n')
+                yield sample_id
+                counter += 1
+        else:
+            for sample_id in sample_id_list:
+                yield sample_id
 
 
 def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:

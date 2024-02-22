@@ -163,7 +163,6 @@ class DFABaselineModel(model.Model):
                      return_hints: bool,
                      return_all_outputs: bool):
             # print('dfa_baselines line 168~ in _use_net')
-            # print(jax.local_devices())
             return dfa_nets.DFANet_v2(spec=self._spec,
                                       hidden_dim=hidden_dim,
                                       encode_hints=encode_hints,
@@ -181,21 +180,24 @@ class DFABaselineModel(model.Model):
 
         # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)
-
-        # func, static_arg, extra_args = jax.jit, 'static_argnums', {}
-        # extra_args[static_arg] = 3
-        self.jitted_grad = jax.jit(self._compute_grad, static_argnums=3)
-        # self.jitted_grad = jax.jit(self._compute_grad)
-        # extra_args[static_arg] = 4
-        self.jitted_feedback = jax.jit(self._feedback,
-                                       donate_argnums=[0, 3],
-                                       static_argnums=4)
-        # extra_args[static_arg] = [3, 4, 5]
-        self.jitted_predict = jax.jit(self._predict, static_argnums=[3, 4, 5])
-        # extra_args[static_arg] = [3, 4]
-        self.jitted_accum_opt_update = jax.jit(baselines.accum_opt_update,
-                                               donate_argnums=[0, 2],
-                                               static_argnums=[3, 4])
+        pmap_args = dict(axis_name='batch', devices=jax.local_devices())
+        n_devices = jax.local_device_count()
+        func, static_arg, extra_args = (
+            (jax.jit, 'static_argnums', {}) if n_devices == 1 else
+            (jax.pmap, 'static_broadcasted_argnums', pmap_args))
+        pmean = functools.partial(jax.lax.pmean, axis_name='batch')
+        self._maybe_pmean = pmean if n_devices > 1 else lambda x: x
+        extra_args[static_arg] = 3
+        # self.jitted_loss = func(self._compute_loss, **extra_args)
+        self.jitted_grad = func(self._compute_grad, **extra_args)
+        extra_args[static_arg] = 4
+        self.jitted_feedback = func(self._feedback, donate_argnums=[0, 3],
+                                    **extra_args)
+        extra_args[static_arg] = [3, 4, 5]
+        self.jitted_predict = func(self._predict, **extra_args)
+        extra_args[static_arg] = [3, 4]
+        self.jitted_accum_opt_update = func(baselines.accum_opt_update, donate_argnums=[0, 2],
+                                            **extra_args)
 
     def init(self, features: Union[_Features, List[_Features]],
              seed: _Seed):
@@ -209,7 +211,6 @@ class DFABaselineModel(model.Model):
                                        algorithm_index=-1,
                                        return_hints=False,
                                        return_all_outputs=False)
-        # print('dfa_baseline line 211')
         self.opt_state = self.opt.init(self.params)
         # We will use the optimizer state skeleton for traversal when we
         # want to avoid updating the state of params of untrained algorithms.
@@ -219,35 +220,37 @@ class DFABaselineModel(model.Model):
     def params(self):
         if self._device_params is None:
             return None
-        return jax.device_get(self._device_params)
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_params))
 
     @params.setter
     def params(self, params):
-        self._device_params = jax.device_put(params)
+        self._device_params = baselines._maybe_put_replicated(params)
 
     @property
     def opt_state(self):
         # print('dfa_baselines line 236~ in property opt_state')
         if self._device_opt_state is None:
             return None
-        return jax.device_get(self._device_opt_state)
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_opt_state))
 
     @opt_state.setter
     def opt_state(self, opt_state):
-        self._device_opt_state = jax.device_put(opt_state)
+        self._device_opt_state = baselines._maybe_put_replicated(opt_state)
 
     def _compute_grad(self, params, rng_key, feedback, algorithm_index):
         # print('dfa_baselines line 246~ in _compute_grad')
         lss, grads = jax.value_and_grad(self._loss)(
             params, rng_key, feedback, algorithm_index)
-        return lss, grads
+        return self._maybe_pmean(lss), self._maybe_pmean(grads)
 
     def _feedback(self, params, rng_key, feedback, opt_state, algorithm_index):
         # print('dfa_baselines line 252~ in _feedback')
         lss, grads = jax.value_and_grad(self._loss)(
             params, rng_key, feedback, algorithm_index)
+        grads = self._maybe_pmean(grads)
         params, opt_state = self._update_params(params, grads, opt_state,
                                                 algorithm_index)
+        lss = self._maybe_pmean(lss)
         return lss, params, opt_state
 
     def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
@@ -281,8 +284,11 @@ class DFABaselineModel(model.Model):
         assert algorithm_index >= 0
         # print('dfa_baselines line 290~ in compute_loss')
         # Calculate gradients.
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = _maybe_pmap_data(feedback)
         loss, _ = self.jitted_grad(
-            self._device_params, rng_key, feedback, algorithm_index)
+            self._device_params, rng_keys, feedback, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
         return loss
 
     def compute_grad(
@@ -299,8 +305,13 @@ class DFABaselineModel(model.Model):
         assert algorithm_index >= 0
 
         # Calculate gradients.
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = _maybe_pmap_data(feedback)
         loss, grads = self.jitted_grad(
-            self._device_params, rng_key, feedback, algorithm_index)
+            self._device_params, rng_keys, feedback, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
+        grads = baselines._maybe_pick_first_pmapped(grads)
+
         return loss, grads
 
     def feedback(self, rng_key: hk.PRNGSequence,
@@ -311,9 +322,12 @@ class DFABaselineModel(model.Model):
             algorithm_index = 0
         # Calculate and apply gradients.
         # print('dfa_baselines line 329~ in feedback')
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = _maybe_pmap_data(feedback)
         loss, self._device_params, self._device_opt_state = self.jitted_feedback(
-            self._device_params, rng_key, feedback,
+            self._device_params, rng_keys, feedback,
             self._device_opt_state, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
         return loss
 
     def predict(self, rng_key: hk.PRNGSequence, features: _Features,
@@ -325,11 +339,14 @@ class DFABaselineModel(model.Model):
             assert len(self._spec) == 1
             algorithm_index = 0
         # print('dfa_baselines line 346~ in predict')
-        return self.jitted_predict(
-            self._device_params, rng_key, features,
-            algorithm_index,
-            return_hints,
-            return_all_outputs)
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = _maybe_pmap_data(features)
+        return baselines._maybe_restack_from_pmap(
+            self.jitted_predict(
+                self._device_params, rng_keys, features,
+                algorithm_index,
+                return_hints,
+                return_all_outputs))
 
     def _loss(self, params, rng_key, feedback, algorithm_index):
         """Calculates model loss f(feedback; params)."""
@@ -376,8 +393,7 @@ class DFABaselineModel(model.Model):
         return new_params, opt_state
 
     def update_model_params_accum(self, grads) -> None:
-        grads = jax.device_put(grads)
-        # print(f'dfa_baseline line 383, grads on {grads.device()}')
+        grads = baselines._maybe_put_replicated(grads)
         self._device_params, self._device_opt_state = self.jitted_accum_opt_update(
             self._device_params, grads, self._device_opt_state, self.opt,
             self._freeze_processor)
@@ -428,3 +444,26 @@ class DFABaselineModel(model.Model):
         path = os.path.join(self.checkpoint_path, file_name)
         with open(path, 'wb') as f:
             pickle.dump(to_save, f)
+
+
+@functools.partial(jax.jit, static_argnums=1)
+def _pmap_data(data: Union[_Feedback, _Features], n_devices: int):
+    """Replicate/split feedback or features for pmapping."""
+    if isinstance(data, _Feedback):
+        features = data.features
+    else:
+        features = data
+    pmap_data = features._replace(
+        input_dp_list=baselines._pmap_reshape(features.input_dp_list, n_devices),
+        trace_h=baselines._pmap_reshape(features.trace_h, n_devices, split_axis=1),
+        padded_edge_indices_dict=baselines._pmap_reshape(features.padded_edge_indices_dict, n_devices),
+        mask_dict=baselines._pmap_reshape(features.mask_dict, n_devices),
+    )
+    return pmap_data
+
+
+def _maybe_pmap_data(data: Union[_Feedback, _Features]):
+    n_devices = jax.local_device_count()
+    if n_devices == 1:
+        return data
+    return _pmap_data(data, n_devices)
