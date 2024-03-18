@@ -1,9 +1,9 @@
-from typing import List, Union, Dict
+from typing import Optional, Union, Dict
 import os, json, sys
 import numpy as np
 from programl.proto import *
 import programl
-import random
+import hashlib
 import jax
 import jax.numpy as jnp
 from clrs._src import dfa_specs, probing
@@ -29,6 +29,10 @@ class DFAException(probing.ProbeError):
 
     UNRECOGNIZED_TASK_NAME = 5
 
+    UNRECOGNIZED_GNN_TYPE = 6
+
+    TOO_LONG_TRACE = 7
+
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
         self.error_code = error_code
@@ -38,8 +42,6 @@ class DFAException(probing.ProbeError):
     def error_msg(self):
         if self.error_code == self.RECORDED_ERRORED_SAMPLE:
             msg = 'This sample has previously been recorded as errored!'
-        # elif self.error_code == self.NEWLY_ERRORED_SAMPLE:
-        #     msg = 'This sample is newly recognized errored, we have now recorded it!'
         elif self.error_code == self.TOO_FEW_IP_NODES:
             msg = 'This sample has too few IP nodes, so we drop it!'
         elif self.error_code == self.TOO_MANY_PP_NODES:
@@ -48,6 +50,8 @@ class DFAException(probing.ProbeError):
             msg = 'Unrecognized activation type! please check your spelling!'
         elif self.error_code == self.UNRECOGNIZED_TASK_NAME:
             msg = 'Unrecognized task name! please check your spelling!'
+        elif self.error_code == self.UNRECOGNIZED_GNN_TYPE:
+            msg = 'Unrecognized gnn type!'
         else:
             msg = 'Unrecognized error!'
         if self.sample_id:
@@ -58,101 +62,85 @@ class DFAException(probing.ProbeError):
 class SamplePathProcessor:
     def __init__(self, sourcegraph_dir: str,
                  errorlog_savepath: str,
-                 dataset_savedir: Union[None, str] = None,
-                 statistics_savepath: Union[None, str] = None):
-        if not os.path.isdir(sourcegraph_dir):
-            # YZDTODO raise an error
-            pass
+                 # statistics_savepath: Union[str, None] = None
+                 ):
         self.sourcegraph_dir = sourcegraph_dir
-        self.errored_sample_ids = {}
-        if not os.path.isfile(errorlog_savepath):
-            os.system(f'touch {errorlog_savepath}')
-        else:
-            with open(errorlog_savepath) as errored_reader:
-                for line in errored_reader.readlines():
-                    errored_sample_id = line.split(':')[0].strip()
-                    self.errored_sample_ids[errored_sample_id] = 1
         self.errorlog_savepath = errorlog_savepath
-        self.dataset_savedir = dataset_savedir
-        self.statistics_savepath = statistics_savepath
+        if not os.path.isfile(self.errorlog_savepath):
+            os.system(f'touch {self.errorlog_savepath}')
+            self.errored_sample_ids = {}
+        elif os.path.getsize(self.errorlog_savepath) == 0:
+            self.errored_sample_ids = {}
+        else:
+            with open(self.errorlog_savepath) as errored_reader:
+                self.errored_sample_ids = json.load(errored_reader)
+        # self.statistics_savepath = statistics_savepath
+        # self.newly_recorded_satistice = {}
 
     def sourcegraph_savepath(self, sample_id):
         return os.path.join(self.sourcegraph_dir, sample_id + '.ProgramGraph.pb')
 
-    def _trace_savedir(self, task_name):
-        return os.path.join(self.dataset_savedir, task_name, 'Traces')
-
-    def _edge_savedir(self, task_name):
-        return os.path.join(self.dataset_savedir, task_name, 'Edges')
-
-    def trace_savepath(self, task_name, if_sync, sample_id):
-        tmp_str = "sync" if if_sync else "async"
-        return os.path.join(self._trace_savedir(task_name), tmp_str,
-                            sample_id + f'.{taskname_shorts[task_name]}.{tmp_str}.trace')
-
-    def edge_savepath(self, task_name, sample_id):
-        return os.path.join(self._edge_savedir(task_name), sample_id + f'.{taskname_shorts[task_name]}.edge')
-
-    def if_sample_exists(self, task_name, if_syn, sample_id):
-        if not self.dataset_savedir:
-            return False
-        trace_path_to_check = self.trace_savepath(task_name, if_syn, sample_id)
-        edge_path_to_check = self.edge_savepath(task_name, sample_id)
-        if not os.path.isfile(trace_path_to_check) or not os.path.isfile(edge_path_to_check):
-            return False
-        if os.path.getsize(trace_path_to_check) == 0 or os.path.getsize(edge_path_to_check) == 0:
-            return False
-        return True
+    def dump_errored_samples_to_log(self):
+        with open(self.errorlog_savepath, 'w') as errored_samples_dumper:
+            json.dump(self.errored_sample_ids, errored_samples_dumper, indent=3)
 
 
 class SampleLoader:
     def __init__(self, sample_path_processor: SamplePathProcessor,
                  # max_iteration: int,
                  expected_trace_len: int,
-                 max_num_pp: int,
-                 cfg_edges_rate: int,
+                 cfg_edges_rate: float,
                  selected_num_ip: int,
-                 if_dfa: bool,
                  if_sync: bool,
-                 if_idx_reorganized: bool = True,
-                 if_save: bool = False):
+                 seed: int,
+                 max_num_pp: Optional[int],  # set None if use it to get statistics
+                 # use_self_loops: bool,
+                 trace_sample_from_start: bool,
+                 dfa_version: Optional[int],
+                 balance_sample_task: Optional[bool] = False,
+                 for_get_statistics: bool = False,
+                 if_idx_reorganized: bool = True
+                 ):
         self.sample_path_processor = sample_path_processor
         self.expected_trace_len = expected_trace_len
         self.expected_hint_len = self.expected_trace_len - 1
         self.cfg_edges_rate = cfg_edges_rate
+        self.for_get_statistics = for_get_statistics
         self.max_num_pp = max_num_pp
+        # self.use_self_loops = use_self_loops
+        self.trace_sample_from_start = trace_sample_from_start
+        if self.for_get_statistics:
+            assert self.max_num_pp is None
         self.if_sync = if_sync
         if self.if_sync:
             self.max_iteration = 200
         else:
             self.max_iteration = self.expected_trace_len - 1
-        self.if_dfa = if_dfa
-        self.if_idx_reorganized = if_idx_reorganized
-        self.if_save = if_save
-        self.selected_num_ip = selected_num_ip
-        if not self.sample_path_processor.dataset_savedir:
-            self.if_save = False
-        if self.sample_path_processor.statistics_savepath:
-            if not os.path.isfile(self.sample_path_processor.statistics_savepath):
-                os.system(f'touch {self.sample_path_processor.statistics_savepath}')
-                self.statistics_dict = {}
-            elif os.path.getsize(self.sample_path_processor.statistics_savepath) == 0:
-                self.statistics_dict = {}
-            else:
-                with open(self.sample_path_processor.statistics_savepath) as log_reader:
-                    self.statistics_dict = json.load(log_reader)
-
-    def _merge_statistics(self, sample_id, new_statistics: Dict):
-        if not sample_id in self.statistics_dict:
-            self.statistics_dict[sample_id] = new_statistics
+        self.dfa_version = dfa_version
+        self.balance_sample_task = balance_sample_task
+        if self.dfa_version == 2:
+            assert isinstance(self.balance_sample_task, bool)
         else:
-            for k, v in new_statistics.items():
-                if not k in self.statistics_dict[sample_id]:
-                    self.statistics_dict[sample_id][k] = v
+            self.balance_sample_task = None
 
-    def log_statistics_to_file(self):
-        with open(self.sample_path_processor.statistics_savepath, 'w') as writer:
-            json.dump(self.statistics_dict, writer, indent=3)
+        self.if_idx_reorganized = if_idx_reorganized
+        # self.if_record_statistics = if_record_statistics
+        self.selected_num_ip = selected_num_ip
+        self._rng = np.random.RandomState(seed)
+        # if self.sample_path_processor.statistics_savepath:
+        #     if not os.path.isfile(self.sample_path_processor.statistics_savepath):
+        #         os.system(f'touch {self.sample_path_processor.statistics_savepath}')
+        #         self.num_pp_statistics = {}
+        #     elif os.path.getsize(self.sample_path_processor.statistics_savepath) == 0:
+        #         self.num_pp_statistics = {}
+        #     else:
+        #         with open(self.sample_path_processor.statistics_savepath) as log_reader:
+        #             self.num_pp_statistics = json.load(log_reader)
+
+    # def log_statistics_to_file(self):
+    #     assert self.if_record_statistics
+    #     with open(self.sample_path_processor.statistics_savepath, 'w') as writer:
+    #         json.dump(self.num_pp_statistics, writer, indent=3)
 
     def _parse_cpp_stdout(self, cpp_out: bytes):
         def _get_a_line(star_idx: int):
@@ -168,30 +156,25 @@ class SampleLoader:
             task_name_in_byte, item_name_in_byte, num = line.split(b' ')
             return str(task_name_in_byte, 'utf-8'), str(item_name_in_byte, 'utf-8'), int(num)
 
-        sample_statistics = dict()
         end_idx_be, byte_str_be = _get_a_line(star_idx=0)
-        task_name, _, num_be = _parse_a_line(byte_str_be)
-        if task_name == 'yzd_dominance':
-            sample_statistics['num_be(forward)'] = num_be
-        else:
-            assert task_name == 'yzd_liveness' or task_name == 'yzd_reachability'
-            sample_statistics['num_be(backward)'] = num_be
+        printed_task_name, _, num_be = _parse_a_line(byte_str_be)
         end_idx_pp, byte_str_pp = _get_a_line(star_idx=end_idx_be)
         _, _, num_pp = _parse_a_line(byte_str_pp)
-        sample_statistics['num_pp'] = num_pp
+        # sample_statistics['num_pp'] = num_pp
         end_idx_ip, byte_str_ip = _get_a_line(star_idx=end_idx_pp)
         _, _, num_ip = _parse_a_line(byte_str_ip)
-        sample_statistics['num_ip'] = num_ip
+        # sample_statistics['num_ip'] = num_ip
         end_idx_it, byte_str_it = _get_a_line(star_idx=end_idx_ip)
-        _, item_name, num_iteration = _parse_a_line(byte_str_it)
-        sample_statistics[f'{item_name}_{task_name}'] = num_iteration
-        printed_trace_len = int(num_iteration)
+        _, item_name, printed_num_iteration = _parse_a_line(byte_str_it)
+        # print(f'dfa_util line 189, line is: {byte_str_it}; num_iteration = {num_iteration}')
+        # sample_statistics[f'{item_name}_{task_name}'] = num_iteration
+        # printed_trace_len = int(num_iteration)
         end_idx_du, byte_str_du = _get_a_line(star_idx=end_idx_it)
         end_idx_edge_size, byte_str_edge_size = _get_a_line(star_idx=end_idx_du)
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
-        return sample_statistics, printed_trace_len, edge_chunck, trace_chunck
+        return printed_num_iteration, edge_chunck, trace_chunck
 
     def _get_node_type(self, task_name: Union[str, bytes],
                        selected_ip_indices_base,
@@ -214,26 +197,22 @@ class SampleLoader:
                                       trace_bytes: bytes,
                                       sample_id: str,
                                       selected_num_ip: int,
-                                      start_trace_idx: int = 0):
+                                      start_trace_idx: int):
         result_obj = ResultsEveryIteration()
         result_obj.ParseFromString(trace_bytes)
         num_pp = len(result_obj.program_points.value)
-        if num_pp > self.max_num_pp:
-            self.sample_path_processor.errored_sample_ids[sample_id] = 1
-            with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(f'{sample_id}: {DFAException.TOO_MANY_PP_NODES}\n')
+        if self.max_num_pp is not None and num_pp > self.max_num_pp:
+            self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_MANY_PP_NODES
             raise DFAException(DFAException.TOO_MANY_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
         if not task_name == 'liveness':
             assert num_pp == num_ip
         if num_ip < selected_num_ip:
-            self.sample_path_processor.errored_sample_ids[sample_id] = 1
-            with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                error_sample_writer.write(f'{sample_id}: {DFAException.TOO_FEW_IP_NODES}\n')
+            self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_FEW_IP_NODES
             raise DFAException(DFAException.TOO_FEW_IP_NODES, sample_id)
 
-        selected_ip_indices_base = np.array(sorted(random.sample(range(num_ip),
-                                                                 selected_num_ip)))
+        selected_ip_indices_base = np.array(
+            sorted(self._rng.choice(a=range(num_ip), size=selected_num_ip, replace=False)))
         # selected_ip_indices_base = np.array([2,3,4,5,57])
         # print(
         #     f'dfa_utils line 281, but for debug!!! selected_ip_base: {selected_ip_indices_base}; start_trace_idx = {start_trace_idx}')
@@ -253,14 +232,14 @@ class SampleLoader:
                 if num_active_ip_node == 0:
                     continue
                 # put corresponding value into trace_matrix
-                if task_name == 'dfa_liveness':
+                if task_name == 'liveness':
                     trace_content_base[np.array(active_ip_list) - num_pp, np.repeat(pp, num_active_ip_node)] = 1
                 else:
                     trace_content_base[np.array(active_ip_list), np.repeat(pp, num_active_ip_node)] = 1
             trace_content_sparse = trace_content_base[selected_ip_indices_base, :]
             # [selected_num_ip, num_pp]
 
-            if self.if_dfa:
+            if self.dfa_version is not None:
                 trace_list.append(trace_content_sparse.transpose())
                 # [num_pp, selected_num_ip]
             else:
@@ -306,13 +285,14 @@ class SampleLoader:
             gen_array_dense[gen_edges[:, 0] - num_pp, gen_edges[:, 1]] = 1
             kill_array_dense[kill_edges[:, 0] - num_pp, kill_edges[:, 1]] = 1
 
-            if self.if_dfa:
+            if self.dfa_version is not None:
                 gen_vectors = gen_array_dense[selected_ip_indices_base, :].transpose()
                 # [num_pp, selected_num_ip ]
                 kill_vectors = kill_array_dense[selected_ip_indices_base, :].transpose()
                 # [num_pp, selected_num_ip, ]
                 return gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                            if_forward=False)
+                                                                            if_forward=False,)
+                                                                            # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
                 # [num_pp * selected_num_ip, ]
@@ -338,13 +318,14 @@ class SampleLoader:
             num_pp = edges_saved_matrix[0, 0]
             cfg_edges = edges_saved_matrix[1:, :]
             gen_array_dense = np.identity(num_pp, dtype=int)
-            if self.if_dfa:
+            if self.dfa_version is not None:
                 gen_vectors = gen_array_dense[selected_ip_indices_base, :].transpose()
                 # [num_pp, selected_num_ip]
-                kill_vectors = np.zeros((num_pp, self.selected_num_ip))
+                kill_vectors = np.zeros((num_pp, self.selected_num_ip), dtype=int)
                 # [num_pp, selected_num_ip]
                 return gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                            if_forward=True if task_name == 'dominance' else False)
+                                                                            if_forward=True if task_name == 'dominance' else False,)
+                                                                            # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
                 # [num_pp * selected_num_ip, ]
@@ -362,94 +343,55 @@ class SampleLoader:
         assert task_name in ['liveness', 'dominance', 'reachability']
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise DFAException(DFAException.RECORDED_ERRORED_SAMPLE, sample_id)
-        if self.sample_path_processor.if_sample_exists(task_name=task_name, if_syn=self.if_sync, sample_id=sample_id):
-            trace_savepath = self.sample_path_processor.trace_savepath(task_name, self.if_sync, sample_id)
-            with open(trace_savepath, 'rb') as result_reader:
-                trace_bytes_from_file = result_reader.read()
-            edge_savepath = self.sample_path_processor.edge_savepath(task_name, sample_id)
-            with open(edge_savepath) as edges_reader:
-                edges_bytes_from_file = edges_reader.read()
-            if self.if_dfa:
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_bytes_from_file,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip)
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edges_bytes_from_file,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                return trace_list, array_list
+        cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
+                                                 max_iteration=self.max_iteration,
+                                                 program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
+                                                     sample_id),
+                                                 edge_list_savepath=None,
+                                                 result_savepath=None,
+                                                 if_sync=self.if_sync,
+                                                 if_idx_reorganized=self.if_idx_reorganized)
+        if len(cpperror) > 0:
+            if cpperror.endswith(b'in certain iterations!\n'):
+                print(f'cpp reports that the trace length exceeds {self.max_iteration}!')
+                self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_LONG_TRACE
+                raise DFAException(DFAException.TOO_LONG_TRACE, sample_id)
             else:
-
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_bytes_from_file,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip)
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edges_bytes_from_file,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type(task_name=task_name,
-                                                   selected_ip_indices_base=selected_ip_indices_base,
-                                                   num_pp=num_pp)
-                return trace_list, array_list, if_pp, if_ip
-
-
-        else:
-            cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
-                                                     max_iteration=self.max_iteration,
-                                                     program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
-                                                         sample_id),
-                                                     edge_list_savepath=self.sample_path_processor.edge_savepath(
-                                                         task_name, sample_id) if self.if_save else None,
-                                                     result_savepath=self.sample_path_processor.trace_savepath(
-                                                         task_name, sample_id) if self.if_save else None,
-                                                     if_sync=self.if_sync,
-                                                     if_idx_reorganized=self.if_idx_reorganized)
-            if len(cpperror) > 0:
-                print('new error occurs from cpp! (dfa_utils line 164)')
-                print(cpperror)
-                self.sample_path_processor.errored_sample_ids[sample_id] = 1
-                with open(self.sample_path_processor.errorlog_savepath, 'a') as error_sample_writer:
-                    error_sample_writer.write(f'{sample_id}: {DFAException.ANALYZE_ERRORED_SAMPLE}\n')
+                print('cpp reports an error!')
+                self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_ERRORED_SAMPLE
                 raise DFAException(DFAException.ANALYZE_ERRORED_SAMPLE, sample_id)
-            sample_statistics, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out)
-            if self.sample_path_processor.statistics_savepath:
-                self._merge_statistics(sample_id, sample_statistics)
-            if self.if_sync and printed_trace_len + 1 > self.expected_trace_len:
-                trace_start_idx = random.randint(0, printed_trace_len - self.expected_trace_len)
-                # print(f'dfa_utils line 183, trace_start_idx = {trace_start_idx}')
-            else:
-                trace_start_idx = 0
-            if self.if_dfa:
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_chunck,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip,
-                                                                                                  start_trace_idx=trace_start_idx)
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edge_chunck,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                return trace_list, array_list
-            else:
-                trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                                  trace_bytes=trace_chunck,
-                                                                                                  sample_id=sample_id,
-                                                                                                  selected_num_ip=self.selected_num_ip,
-                                                                                                  start_trace_idx=trace_start_idx)
-                # print(
-                #     f'dfa_utils line 187, len of trace_list = {len(trace_list)}; while printed_trace_len = {printed_trace_len}')
-                # for idx in range(len(trace_list) - 1):
-                #     print(
-                #         f'if trace_{idx + trace_start_idx} the same with trace_{trace_start_idx + idx + 1}? {np.array_equal(trace_list[idx], trace_list[idx + 1])}')
-                array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                             edges_str=edge_chunck,
-                                                             selected_ip_indices_base=selected_ip_indices_base)
-                if_pp, if_ip = self._get_node_type(task_name=task_name,
-                                                   selected_ip_indices_base=selected_ip_indices_base,
-                                                   num_pp=num_pp)
-                return trace_list, array_list, if_pp, if_ip
+        printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
+        # if self.sample_path_processor.statistics_savepath:
+        #     self._merge_statistics(sample_id, sample_statistics)
+        print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
+        if self.if_sync and printed_trace_len > self.expected_trace_len and not self.trace_sample_from_start:
+            trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
+        else:
+            trace_start_idx = 0
+        trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
+                                                                                          trace_bytes=trace_chunck,
+                                                                                          sample_id=sample_id,
+                                                                                          selected_num_ip=self.selected_num_ip,
+                                                                                          start_trace_idx=trace_start_idx)
+        array_list = self._load_sparse_edge_from_str(task_name=task_name,
+                                                     edges_str=edge_chunck,
+                                                     selected_ip_indices_base=selected_ip_indices_base)
+        if self.for_get_statistics:
+            return num_pp
+        if self.dfa_version is not None:
+            return trace_list, array_list
+        else:
+            if_pp, if_ip = self._get_node_type(task_name=task_name,
+                                               selected_ip_indices_base=selected_ip_indices_base,
+                                               num_pp=num_pp)
+            return trace_list, array_list, if_pp, if_ip
 
 
-def _derive_bidirectional_cfg(cfg_indices, if_forward):
+def _derive_bidirectional_cfg(cfg_indices,
+                              if_forward,
+                              # num_pp: Optional[int]
+                              ):
+    # if num_pp is not None, self-loops are added
     num_cfg_edges = cfg_indices.shape[0]
     dual_cfg_indices = cfg_indices[:, [1, 0]]
     cfg_edges_forward = np.concatenate([cfg_indices if if_forward else dual_cfg_indices,
@@ -459,7 +401,19 @@ def _derive_bidirectional_cfg(cfg_indices, if_forward):
     cfg_edges_backward = np.concatenate([cfg_indices if not if_forward else dual_cfg_indices,
                                          np.zeros((num_cfg_edges, 1), dtype=int)],
                                         axis=1)
+    # if num_pp is None:
     return np.concatenate([cfg_edges_forward, cfg_edges_backward], axis=0)
+    #   [2*num_cfg, 3]
+    # else:
+    #     self_loops_indices = np.repeat(np.arange(num_pp).reshape((num_pp, 1)),
+    #                                    axis=1, repeats=2)
+    #     #   [num_pp, 2]
+    #     self_loops_content = 2 * np.ones((num_pp, 1), dtype=int)
+    #     #   [num_pp, 1]
+    #     self_loops = np.concatenate([self_loops_indices, self_loops_content], axis=1)
+    #     #   [num_pp, 3]
+    #     return np.concatenate([cfg_edges_forward, cfg_edges_backward, self_loops], axis=0)
+    #     #   [2*num_cfg + num_pp]
 
 
 def _get_analyze_task_name(task_name: str):
@@ -478,49 +432,207 @@ def _get_activation(activation_str):
     raise DFAException(DFAException.UNRECOGNIZED_ACTIVATION_TYPE)
 
 
-def parse_params(params_filepath: str):
-    with open(params_filepath) as json_loader:
-        params_dict = json.load(json_loader)
-    errored_sample_ids = {}
-    with open(params_dict['sample_path_processor']['errorlog_savepath']) as errored_sample_ids_loader:
-        for line in errored_sample_ids_loader.readlines():
-            errored_sample_id = line.split(':')[0].strip()
-            errored_sample_ids[errored_sample_id] = 1
-    train_sample_id_list = []
-    with open(params_dict['dfa_sampler']['train_sample_id_savepath']) as train_sample_reader:
-        for line in train_sample_reader.readlines():
-            sample_id = line.strip()
-            if not sample_id in errored_sample_ids:
-                train_sample_id_list.append(line.strip())
-    params_dict['dfa_sampler']['train_sample_id_list'] = train_sample_id_list
-    del params_dict['dfa_sampler']['train_sample_id_savepath']
-    vali_sample_id_list = []
-    with open(params_dict['dfa_sampler']['vali_sample_id_savepath']) as vali_sample_reader:
-        for line in vali_sample_reader.readlines():
-            sample_id = line.strip()
-            if not sample_id in errored_sample_ids:
-                vali_sample_id_list.append(line.strip())
-    params_dict['dfa_sampler']['vali_sample_id_list'] = vali_sample_id_list
-    del params_dict['dfa_sampler']['vali_sample_id_savepath']
-    test_sample_id_list = []
-    with open(params_dict['dfa_sampler']['test_sample_id_savepath']) as test_sample_reader:
-        for line in test_sample_reader.readlines():
-            sample_id = line.strip()
-            if not sample_id in errored_sample_ids:
-                test_sample_id_list.append(line.strip())
-    params_dict['dfa_sampler']['test_sample_id_list'] = test_sample_id_list
-    del params_dict['dfa_sampler']['test_sample_id_savepath']
-
-    if params_dict['sample_loader']['if_dfa']:
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa']]
-    else:
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
-        params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
-        del params_dict['processor']['activation_name']
-    return params_dict
-
-
 def dim_expand_to(x, y):
     while len(y.shape) > len(x.shape):
         x = jnp.expand_dims(x, -1)
     return x
+
+
+def parse_params(params_hash: str,
+                 params_filepath: str,
+                 statistics_filepath: str,
+                 for_model_test: bool):
+    with open(params_filepath) as params_loader:
+        params_dict = json.load(params_loader)
+    if not for_model_test:
+        with open(statistics_filepath) as statistics_loader:
+            statistics_dict = json.load(statistics_loader)
+        with open(params_dict['sample_path_processor']['errorlog_savepath']) as errored_sample_ids_loader:
+            errored_sample_ids = json.load(errored_sample_ids_loader)
+
+        def _create_sample_list(max_num_pp,
+                                sample_id_savepath):
+            sample_id_list = []
+            with open(sample_id_savepath) as sample_ids_loader:
+                for line in sample_ids_loader.readlines():
+                    sample_id = line.strip()
+                    if sample_id in statistics_dict:
+                        if statistics_dict[sample_id] > max_num_pp:
+                            continue
+                    else:
+                        assert sample_id in errored_sample_ids
+                        continue
+                    sample_id_list.append(sample_id)
+            return sample_id_list
+
+        # create the list of train set. need to get rid of the ones exceeds max_num_pp or with errors
+        train_sample_id_list = _create_sample_list(max_num_pp=params_dict['train_sample_loader']['max_num_pp'],
+                                                   sample_id_savepath=params_dict['dfa_sampler'][
+                                                       'train_sample_id_savepath'])
+        params_dict['dfa_sampler']['train_sample_id_list'] = train_sample_id_list
+        del params_dict['dfa_sampler']['train_sample_id_savepath']
+
+        # create the list of vali set.
+        vali_sample_id_list = _create_sample_list(max_num_pp=params_dict['vali_sample_loader']['max_num_pp'],
+                                                  sample_id_savepath=params_dict['dfa_sampler'][
+                                                      'vali_sample_id_savepath'])
+        params_dict['dfa_sampler']['vali_sample_id_list'] = vali_sample_id_list
+        # print(f'dfa_utils line 463, len of vali_sample_list = {len(vali_sample_id_list)}')
+        del params_dict['dfa_sampler']['vali_sample_id_savepath']
+
+        # create the list of test set.
+        # test_sample_id_list = _create_sample_list(max_num_pp=params_dict['test_sample_loader']['max_num_pp'],
+        #                                           sample_id_savepath=params_dict['dfa_sampler']['test_sample_id_savepath'])
+        # params_dict['dfa_sampler']['test_sample_id_list'] = test_sample_id_list
+        # del params_dict['dfa_sampler']['test_sample_id_savepath']
+
+    if params_dict['train_sample_loader']['dfa_version'] == 0:
+        params_dict['vali_sample_loader']['dfa_version'] = 0
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa']]
+        params_dict['dfa_net']['dfa_version'] = 0
+    elif params_dict['train_sample_loader']['dfa_version'] == 1:
+        params_dict['vali_sample_loader']['dfa_version'] = 1
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v1']]
+        params_dict['dfa_net']['dfa_version'] = 1
+    elif params_dict['train_sample_loader']['dfa_version'] == 2:
+        params_dict['vali_sample_loader']['dfa_version'] = 2
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v2']]
+        params_dict['dfa_net']['dfa_version'] = 2
+    else:
+        assert params_dict['train_sample_loader']['dfa_version'] is None
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
+        params_dict['dfa_net']['dfa_version'] = None
+        params_dict['processor']['activation'] = _get_activation(params_dict['processor']['activation_name'])
+        del params_dict['processor']['activation_name']
+    params_dict['baseline_model']['checkpoint_path'] = os.path.join(params_dict['baseline_model']['checkpoint_path'],
+                                                                    f'{params_hash}_ckpt')
+    if not os.path.isdir(params_dict['baseline_model']['checkpoint_path']):
+        os.system('mkdir {}'.format(params_dict['baseline_model']['checkpoint_path']))
+    if params_dict['processor']['kind'] == 'gnn_v2':
+        version_of_DFANet = 2
+    elif params_dict['processor']['kind'] == 'gnn_v3':
+        version_of_DFANet = 3
+    elif params_dict['processor']['kind'] == 'gnn_v4':
+        version_of_DFANet = 4
+    elif params_dict['processor']['kind'] == 'gnn_v5':
+        version_of_DFANet = 5
+    elif params_dict['processor']['kind'] == 'gnn_v6':
+        version_of_DFANet = 6
+    else:
+        print('unrecognized version of GNN_kind!')
+        raise DFAException(DFAException.UNRECOGNIZED_GNN_TYPE)
+    params_dict['baseline_model']['version_of_DFANet'] = version_of_DFANet
+
+    return params_dict
+
+
+def get_statistics_from_dataset(sourcegraph_dir: str,
+                                errorlog_savepath: str,
+                                sample_ids_savepath: str,
+                                statistics_log_savepath: str):
+    sample_path_processor = SamplePathProcessor(
+        sourcegraph_dir=sourcegraph_dir,
+        errorlog_savepath=errorlog_savepath)
+    sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
+                                 expected_trace_len=6,
+                                 max_num_pp=None,
+                                 cfg_edges_rate=1.5,
+                                 selected_num_ip=5,
+                                 for_get_statistics=True,
+                                 dfa_version=0,
+                                 use_self_loops=True,
+                                 if_sync=True,
+                                 trace_sample_from_start=True,
+                                 seed=6)
+    if not os.path.isfile(statistics_log_savepath) or os.path.getsize(statistics_log_savepath) == 0:
+        statistics_dict = {}
+    else:
+        with open(statistics_log_savepath) as f:
+            statistics_dict = json.load(f)
+    count = 0
+    with open(sample_ids_savepath) as f:
+        for line in f.readlines():
+            sample_id = line.strip()
+            if sample_id in statistics_dict or sample_id in sample_path_processor.errored_sample_ids:
+                print(f'{sample_id} has been processed, so skip!')
+                continue
+            count += 1
+            if count % 5000 == 0:
+                sample_path_processor.dump_errored_samples_to_log()
+                with open(statistics_log_savepath, 'w') as statistics_logger:
+                    json.dump(statistics_dict, statistics_logger, indent=3)
+            print(f'{count}: {sample_id} id on processing...')
+            try:
+                num_pp = sample_loader.load_a_sample(task_name='liveness',
+                                                     sample_id=sample_id)
+                statistics_dict[sample_id] = num_pp
+                print(f'success! num_pp = {num_pp}')
+            except DFAException as e:
+                print(f'{sample_id} errored! error_code: {e.error_code}')
+                continue
+    sample_path_processor.dump_errored_samples_to_log()
+    with open(statistics_log_savepath, 'w') as statistics_logger:
+        json.dump(statistics_dict, statistics_logger, indent=3)
+
+
+def compute_hash(file_path,
+                 if_for_test: bool):
+    if if_for_test:
+        skip_item_list = [b'   "num_steps_per_ckpt"']
+    else:
+        skip_item_list = [b'      "nb_epochs":',
+                          b'      "num_samples_train_set"',
+                          b'      "num_samples_test_set"',
+                          b'      "num_samples_vali_set"']
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read and update hash in chunks of 4K
+        for line in f:
+            flag = 1
+            for skip_item in skip_item_list:
+                if line.startswith(skip_item):
+                    flag = 0
+                    break
+            if flag:
+                sha256_hash.update(line)
+    return sha256_hash.hexdigest()
+
+
+def rename_params_file(params_savedir,
+                       params_filename,
+                       if_test_params):
+    cur_params_filepath = os.path.join(params_savedir, params_filename)
+    params_hash = compute_hash(file_path=cur_params_filepath,
+                               if_for_test=if_test_params)
+    params_filename_prefix = params_filename.split('.')[0]
+    if params_filename_prefix == params_hash:
+        if if_test_params:
+            assert params_filename == f'{params_hash}.test_info'
+        else:
+            assert params_filename == f'{params_hash}.params'
+        return params_hash, cur_params_filepath
+    if if_test_params:
+        new_params_filename = f'{params_hash}.test_info'
+    else:
+        new_params_filename = f'{params_hash}.params'
+    new_params_filepath = os.path.join(params_savedir, new_params_filename)
+    os.system(f'mv {cur_params_filepath} {new_params_filepath}')
+    # print(f'dfa_train line 39 new_params_filepath = {new_params_filepath}')
+    # exit(40)
+    if not os.path.isfile(new_params_filepath):
+        print('where is the renamed params file???')
+        exit(1)
+    return params_hash, new_params_filepath
+
+
+if __name__ == '__main__':
+    # sourcegraph_dir = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/programl_downloaded'
+    # errorlog_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/test_error_logs/test_error_log.txt'
+    sourcegraph_dir = '/data_hdd/lx20/yzd_workspace/Datasets/ProgramlDatasetUnzip/dataflow/graphs'
+    errorlog_savepath = '/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/poj104_errors_max200.txt'
+    test_sample_ids_savepath = '/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/poj_104/test_sample_ids_v1.txt'
+    statistics_log_savepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/POJ104Statistics/poj104_statistics.json'
+    get_statistics_from_dataset(sourcegraph_dir=sourcegraph_dir,
+                                errorlog_savepath=errorlog_savepath,
+                                sample_ids_savepath=test_sample_ids_savepath,
+                                statistics_log_savepath=statistics_log_savepath)

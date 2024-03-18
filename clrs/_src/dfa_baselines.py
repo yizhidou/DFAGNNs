@@ -35,6 +35,7 @@ from clrs._src import baselines
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 
 _Array = chex.Array
@@ -64,6 +65,7 @@ class DFABaselineModel(model.Model):
             hidden_dim: int,
             encode_hints: bool,
             decode_hints: bool,
+            take_hint_as_outpt: bool,
             use_lstm: bool,
             dropout_prob: float,
             hint_teacher_forcing: float,
@@ -72,6 +74,8 @@ class DFABaselineModel(model.Model):
             grad_clip_max_norm: float,
             checkpoint_path: str,
             freeze_processor: bool,
+            version_of_DFANet: Union[None, int],
+            dfa_version: Union[None, int],
             encoder_init: str = 'default',
             name: str = 'dfa_base_model'):
         """Constructor for BaselineModel.
@@ -122,6 +126,14 @@ class DFABaselineModel(model.Model):
           ValueError: if `encode_hints=True` and `decode_hints=False`.
         """
         super(DFABaselineModel, self).__init__(spec=spec)
+        # if 'dfa' in self._spec[0].keys():
+        #     self.dfa_version = 0
+        # elif 'dfa_v1' in self._spec[0].keys():
+        #     self.dfa_version = 1
+        # elif 'dfa_v2' in self._spec[0].keys():
+        #     self.dfa_version = 2
+        # else:
+        #     self.dfa_version = None
 
         if encode_hints and not decode_hints:
             raise ValueError('`encode_hints=True`, `decode_hints=False` is invalid.')
@@ -129,6 +141,7 @@ class DFABaselineModel(model.Model):
         assert hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
 
         self.decode_hints = decode_hints
+        self.take_hint_as_outpt = take_hint_as_outpt
         self.checkpoint_path = checkpoint_path
         self.name = name
         self._freeze_processor = freeze_processor
@@ -142,7 +155,7 @@ class DFABaselineModel(model.Model):
 
         self._create_net_fns(hidden_dim, encode_hints, processor_factory, use_lstm,
                              encoder_init, dropout_prob, hint_teacher_forcing,
-                             hint_repred_mode)
+                             hint_repred_mode, version_of_DFANet, dfa_version)
         self._device_params = None
         self._device_opt_state = None
         self.opt_state_skeleton = None
@@ -154,7 +167,9 @@ class DFABaselineModel(model.Model):
                         encoder_init: str,
                         dropout_prob: float,
                         hint_teacher_forcing: float,
-                        hint_repred_mode: str):
+                        hint_repred_mode: str,
+                        version_of_DFANet: int,
+                        dfa_version: Union[None, int]):
         # print('dfa_baselines line 162~ in __init__._create_net_fns')
 
         def _use_net(features_list: List[_Features],
@@ -162,40 +177,101 @@ class DFABaselineModel(model.Model):
                      algorithm_index: int,
                      return_hints: bool,
                      return_all_outputs: bool):
-            # print('dfa_baselines line 168~ in _use_net')
-            # print(jax.local_devices())
-            return dfa_nets.DFANet_v2(spec=self._spec,
-                                      hidden_dim=hidden_dim,
-                                      encode_hints=encode_hints,
-                                      decode_hints=self.decode_hints,
-                                      processor_factory=processor_factory,
-                                      use_lstm=use_lstm,
-                                      encoder_init=encoder_init,
-                                      dropout_prob=dropout_prob,
-                                      hint_teacher_forcing=hint_teacher_forcing,
-                                      hint_repred_mode=hint_repred_mode)(features_list,
-                                                                         repred,
-                                                                         algorithm_index,
-                                                                         return_hints,
-                                                                         return_all_outputs)
+            print('dfa_baselines line 168~ in _use_net')
+            print(jax.local_devices())
+            # exit(666)
+            if version_of_DFANet == 2:
+                return dfa_nets.DFANet_v2(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
+            elif version_of_DFANet == 3:
+                return dfa_nets.DFANet_v3(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
+            elif version_of_DFANet == 4 or version_of_DFANet == 6:
+                return dfa_nets.DFANet_v4(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
+            elif version_of_DFANet == 5:
+                return dfa_nets.DFANet_v5(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
+
+            assert False
 
         # print('dfa_baselines line 186~')
         self.net_fn = hk.transform(_use_net)
-
-        # func, static_arg, extra_args = jax.jit, 'static_argnums', {}
-        # extra_args[static_arg] = 3
-        self.jitted_grad = jax.jit(self._compute_grad, static_argnums=3)
-        # self.jitted_grad = jax.jit(self._compute_grad)
-        # extra_args[static_arg] = 4
-        self.jitted_feedback = jax.jit(self._feedback,
-                                       donate_argnums=[0, 3],
-                                       static_argnums=4)
-        # extra_args[static_arg] = [3, 4, 5]
-        self.jitted_predict = jax.jit(self._predict, static_argnums=[3, 4, 5])
-        # extra_args[static_arg] = [3, 4]
-        self.jitted_accum_opt_update = jax.jit(baselines.accum_opt_update,
-                                               donate_argnums=[0, 2],
-                                               static_argnums=[3, 4])
+        pmap_args = dict(axis_name='batch', devices=jax.local_devices())
+        n_devices = jax.local_device_count()
+        func, static_arg, extra_args = (
+            (jax.jit, 'static_argnums', {}) if n_devices == 1 else
+            (jax.pmap, 'static_broadcasted_argnums', pmap_args))
+        pmean = functools.partial(jax.lax.pmean, axis_name='batch')
+        self._maybe_pmean = pmean if n_devices > 1 else lambda x: x
+        extra_args[static_arg] = 3
+        # self.jitted_loss = func(self._compute_loss, **extra_args)
+        self.jitted_grad = func(self._compute_grad, **extra_args)
+        extra_args[static_arg] = 4
+        self.jitted_feedback = func(self._feedback, donate_argnums=[0, 3],
+                                    **extra_args)
+        extra_args[static_arg] = [3, 4, 5]
+        self.jitted_predict = func(self._predict, **extra_args)
+        self.jitted_soft_max_pred = func(self._get_pred_softmax_for_debug, **extra_args)
+        extra_args[static_arg] = [3, 4]
+        self.jitted_accum_opt_update = func(baselines.accum_opt_update, donate_argnums=[0, 2],
+                                            **extra_args)
 
     def init(self, features: Union[_Features, List[_Features]],
              seed: _Seed):
@@ -207,9 +283,8 @@ class DFABaselineModel(model.Model):
                                        features_list=features,
                                        repred=True,  # pytype: disable=wrong-arg-types  # jax-ndarray
                                        algorithm_index=-1,
-                                       return_hints=False,
+                                       return_hints=False,  # supposed to be false
                                        return_all_outputs=False)
-        # print('dfa_baseline line 211')
         self.opt_state = self.opt.init(self.params)
         # We will use the optimizer state skeleton for traversal when we
         # want to avoid updating the state of params of untrained algorithms.
@@ -219,117 +294,22 @@ class DFABaselineModel(model.Model):
     def params(self):
         if self._device_params is None:
             return None
-        return jax.device_get(self._device_params)
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_params))
 
     @params.setter
     def params(self, params):
-        self._device_params = jax.device_put(params)
+        self._device_params = baselines._maybe_put_replicated(params)
 
     @property
     def opt_state(self):
         # print('dfa_baselines line 236~ in property opt_state')
         if self._device_opt_state is None:
             return None
-        return jax.device_get(self._device_opt_state)
+        return jax.device_get(baselines._maybe_pick_first_pmapped(self._device_opt_state))
 
     @opt_state.setter
     def opt_state(self, opt_state):
-        self._device_opt_state = jax.device_put(opt_state)
-
-    def _compute_grad(self, params, rng_key, feedback, algorithm_index):
-        # print('dfa_baselines line 246~ in _compute_grad')
-        lss, grads = jax.value_and_grad(self._loss)(
-            params, rng_key, feedback, algorithm_index)
-        return lss, grads
-
-    def _feedback(self, params, rng_key, feedback, opt_state, algorithm_index):
-        # print('dfa_baselines line 252~ in _feedback')
-        lss, grads = jax.value_and_grad(self._loss)(
-            params, rng_key, feedback, algorithm_index)
-        params, opt_state = self._update_params(params, grads, opt_state,
-                                                algorithm_index)
-        return lss, params, opt_state
-
-    def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
-                 algorithm_index: int, return_hints: bool,
-                 return_all_outputs: bool):
-        # print('dfa_baselines line 264~ in _predict')
-        outs, hint_preds = self.net_fn.apply(
-            params, rng_key, [features],
-            repred=True, algorithm_index=algorithm_index,
-            return_hints=return_hints,
-            return_all_outputs=return_all_outputs)
-        outs = decoders.postprocess(self._spec[algorithm_index],
-                                    outs,
-                                    sinkhorn_temperature=0.1,
-                                    sinkhorn_steps=50,
-                                    hard=True,
-                                    )
-        return outs, hint_preds
-
-    def compute_loss(
-            self,
-            rng_key: hk.PRNGSequence,
-            feedback: _Feedback,
-            algorithm_index: Optional[int] = None,
-    ) -> float:
-        """Compute gradients."""
-
-        if algorithm_index is None:
-            assert len(self._spec) == 1
-            algorithm_index = 0
-        assert algorithm_index >= 0
-        # print('dfa_baselines line 290~ in compute_loss')
-        # Calculate gradients.
-        loss, _ = self.jitted_grad(
-            self._device_params, rng_key, feedback, algorithm_index)
-        return loss
-
-    def compute_grad(
-            self,
-            rng_key: hk.PRNGSequence,
-            feedback: _Feedback,
-            algorithm_index: Optional[int] = None,
-    ) -> Tuple[float, _Array]:
-        """Compute gradients."""
-        # print('dfa_baselines line 306~ in compute_grad')
-        if algorithm_index is None:
-            assert len(self._spec) == 1
-            algorithm_index = 0
-        assert algorithm_index >= 0
-
-        # Calculate gradients.
-        loss, grads = self.jitted_grad(
-            self._device_params, rng_key, feedback, algorithm_index)
-        return loss, grads
-
-    def feedback(self, rng_key: hk.PRNGSequence,
-                 feedback: _Feedback,
-                 algorithm_index=None) -> float:
-        if algorithm_index is None:
-            assert len(self._spec) == 1
-            algorithm_index = 0
-        # Calculate and apply gradients.
-        # print('dfa_baselines line 329~ in feedback')
-        loss, self._device_params, self._device_opt_state = self.jitted_feedback(
-            self._device_params, rng_key, feedback,
-            self._device_opt_state, algorithm_index)
-        return loss
-
-    def predict(self, rng_key: hk.PRNGSequence, features: _Features,
-                algorithm_index: Optional[int] = None,
-                return_hints: bool = False,
-                return_all_outputs: bool = False):
-        """Model inference step."""
-        if algorithm_index is None:
-            assert len(self._spec) == 1
-            algorithm_index = 0
-        # print('dfa_baselines line 346~ in predict')
-        return self.jitted_predict(
-            self._device_params, rng_key, features,
-            algorithm_index,
-            return_hints,
-            return_all_outputs)
+        self._device_opt_state = baselines._maybe_put_replicated(opt_state)
 
     def _loss(self, params, rng_key, feedback, algorithm_index):
         """Calculates model loss f(feedback; params)."""
@@ -356,8 +336,32 @@ class DFABaselineModel(model.Model):
             truth_trace_h = feedback.features.trace_h
             total_loss += dfa_losses.trace_h_loss(truth=truth_trace_h,
                                                   preds=pred_trace_h_i,
-                                                  lengths=hint_len)
+                                                  lengths=hint_len,
+                                                  take_hint_as_outpt=self.take_hint_as_outpt)
         return total_loss
+
+    def compute_grad(
+            self,
+            rng_key: hk.PRNGSequence,
+            feedback: _Feedback,
+            algorithm_index: Optional[int] = None,
+    ) -> Tuple[float, _Array]:
+        """Compute gradients."""
+        # print('dfa_baselines line 306~ in compute_grad')
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        assert algorithm_index >= 0
+
+        # Calculate gradients.
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
+        loss, grads = self.jitted_grad(
+            self._device_params, rng_keys, feedback, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
+        grads = baselines._maybe_pick_first_pmapped(grads)
+
+        return loss, grads
 
     def _update_params(self, params, grads, opt_state, algorithm_index):
         # print('dfa_baselines line 385~ in _update_params')
@@ -375,9 +379,226 @@ class DFABaselineModel(model.Model):
 
         return new_params, opt_state
 
+    def _feedback(self, params, rng_key, feedback, opt_state, algorithm_index):
+        # print('dfa_baselines line 252~ in _feedback')
+        lss, grads = jax.value_and_grad(self._loss)(
+            params, rng_key, feedback, algorithm_index)
+        grads = self._maybe_pmean(grads)
+        # print(f'dfa_baseline line 386 grads = {grads}')
+        params, opt_state = self._update_params(params, grads, opt_state,
+                                                algorithm_index)
+        lss = self._maybe_pmean(lss)
+        return lss, params, opt_state
+
+    def feedback(self, rng_key: hk.PRNGSequence,
+                 feedback: _Feedback,
+                 algorithm_index=None) -> float:
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        # Calculate and apply gradients.
+        # print('dfa_baselines line 329~ in feedback')
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
+        loss, self._device_params, self._device_opt_state = self.jitted_feedback(
+            self._device_params, rng_keys, feedback,
+            self._device_opt_state, algorithm_index)
+        loss = baselines._maybe_pick_first_pmapped(loss)
+        return loss
+
+    def _compute_grad(self, params, rng_key, feedback, algorithm_index):
+        # print('dfa_baselines line 246~ in _compute_grad')
+        lss, grads = jax.value_and_grad(self._loss)(
+            params, rng_key, feedback, algorithm_index)
+        return self._maybe_pmean(lss), self._maybe_pmean(grads)
+
+    def _get_pred_softmax_for_debug(self, params, rng_key: hk.PRNGSequence, features: _Features,
+                                    algorithm_index: int, return_hints: bool,
+                                    return_all_outputs: bool):
+        outs, hint_preds = self.net_fn.apply(
+            params, rng_key, [features],
+            repred=True, algorithm_index=algorithm_index,
+            return_hints=return_hints,
+            return_all_outputs=return_all_outputs)
+        return outs, jax.nn.log_softmax(outs)
+
+    def get_softmax_for_debug(self, rng_key: hk.PRNGSequence,
+                              features: _Features,
+                              algorithm_index: Optional[int] = None,
+                              return_hints: bool = False,
+                              return_all_outputs: bool = False):
+        """Model inference step."""
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        # print('dfa_baselines line 346~ in predict')
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = baselines._maybe_pmap_data(features)
+        return baselines._maybe_restack_from_pmap(
+            self.jitted_soft_max_pred(
+                self._device_params, rng_keys, features,
+                algorithm_index,
+                return_hints,
+                return_all_outputs))
+
+    def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
+                 algorithm_index: int, return_hints: bool,
+                 return_all_outputs: bool):
+        # print('dfa_baselines line 264~ in _predict')
+        outs, hint_preds = self.net_fn.apply(
+            params, rng_key, [features],
+            repred=True, algorithm_index=algorithm_index,
+            return_hints=return_hints,
+            return_all_outputs=return_all_outputs)
+        # outs = decoders.postprocess(self._spec[algorithm_index],
+        #                             outs,
+        #                             sinkhorn_temperature=0.1,
+        #                             sinkhorn_steps=50,
+        #                             hard=True,
+        #                             )
+        if self._spec[algorithm_index]['trace_o'][-1] == specs.Type.MASK:
+            outs = (outs > 0.0) * 1.0
+        else:
+            outs = jnp.argmax(outs, -1)
+        return outs, hint_preds
+
+    def predict(self, rng_key: hk.PRNGSequence, features: _Features,
+                algorithm_index: Optional[int] = None,
+                return_hints: bool = False,
+                return_all_outputs: bool = False):
+        """Model inference step."""
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        # print('dfa_baselines line 346~ in predict')
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = baselines._maybe_pmap_data(features)
+        return baselines._maybe_restack_from_pmap(
+            self.jitted_predict(
+                self._device_params, rng_keys, features,
+                algorithm_index,
+                return_hints,
+                return_all_outputs))
+
+    def get_measures(self, rng_key: hk.PRNGSequence,
+                     feedback: _Feedback,
+                     algorithm_index: Optional[int] = None,
+                     return_hints: bool = False,
+                     return_all_outputs: bool = False
+                     ):
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = baselines._maybe_pmap_data(feedback.features)
+        trace_o_pred, trace_h_pred = self.jitted_predict(self._device_params, rng_keys, features,
+                                                         algorithm_index,
+                                                         return_hints,
+                                                         return_all_outputs)
+
+        if feedback.trace_o._type_ == specs.Type.MASK:
+            # Mask out the -1 values in truth
+            mask = feedback.trace_o.data != specs.OutputClass.MASKED
+            # Convert predictions to binary by thresholding
+            preds_masked = trace_o_pred[mask]
+            truth_data_masked = feedback.trace_o.data[mask]
+
+            # Calculate true positives, false positives, and false negatives
+            tp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
+            fp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked < 0.5, 1, 0))
+            fn = jnp.sum(jnp.where(preds_masked < 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
+        else:
+            mask = feedback.trace_o.data[..., 0] != specs.OutputClass.MASKED
+            preds_masked = trace_o_pred[mask]
+            truth_data_masked = jnp.argmax(feedback.trace_o.data[mask], -1)
+            # print(f'dfa_baseline line 482, preds = {preds_masked}; truth = {truth_data_masked}')
+
+            tp = jnp.sum(preds_masked * truth_data_masked)
+            fp = jnp.sum(preds_masked * (1 - truth_data_masked))
+            fn = jnp.sum((1 - preds_masked) * truth_data_masked)
+
+        print(f'dfa_baseline line 489, tp = {tp}; fp = {fp}; fn = {fn}')
+        if tp + fp > 0:
+            precision = tp / (tp + fp)
+        else:
+            # precision = jnp.array([1.])
+            precision = 1.0
+        if tp + fn > 0:
+            recall = tp / (tp + fn)
+        else:
+            # recall = jnp.array([1.])
+            recall = 1.0
+        if precision + recall > 0.0:
+            f_1 = 2.0 * precision * recall / (precision + recall)
+        else:
+            # f_1 = jnp.array([0.])
+            f_1 = 0.0
+        positive_num = jnp.sum(truth_data_masked)
+        total_num = 1
+        for i in truth_data_masked.shape:
+            total_num *= i
+
+        return precision, recall, f_1, positive_num, total_num
+
+    def get_measures_deprecated(self, rng_key: hk.PRNGSequence,
+                                feedback: _Feedback,
+                                algorithm_index: Optional[int] = None,
+                                return_hints: bool = False,
+                                return_all_outputs: bool = False
+                                ):
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        features = baselines._maybe_pmap_data(feedback.features)
+        trace_o_pred, trace_h_pred = self.jitted_predict(self._device_params, rng_keys, features,
+                                                         algorithm_index,
+                                                         return_hints,
+                                                         return_all_outputs)
+        # Mask out the -1 values in truth
+        mask = feedback.trace_o.data != specs.OutputClass.MASKED
+        # Convert predictions to binary by thresholding
+        preds_binary = jnp.where(trace_o_pred > 0, 1, 0)
+        preds_binary = preds_binary[mask]
+        truth_data_masked = feedback.trace_o.data[mask]
+
+        # Calculate true positives, false positives, and false negatives
+        tp = jnp.sum(preds_binary * truth_data_masked)
+        fp = jnp.sum(preds_binary * (1 - truth_data_masked))
+        fn = jnp.sum((1 - preds_binary) * truth_data_masked)
+
+        # Calculate precision and recall
+        precision = tp / (tp + fp)
+        recall = tp / (tp + fn)
+
+        # Calculate F1 score
+        f1_score = 2 * precision * recall / (precision + recall)
+        return precision, recall, f1_score
+
+    def restore_model(self, file_name: str, only_load_processor: bool = False):
+        """Restore model from `file_name`."""
+        # print('dfa_baselines line 433~ in restore_model')
+        path = os.path.join(self.checkpoint_path, file_name)
+        with open(path, 'rb') as f:
+            restored_state = pickle.load(f)
+            if only_load_processor:
+                restored_params = baselines._filter_in_processor(restored_state['params'])
+            else:
+                restored_params = restored_state['params']
+            self.params = hk.data_structures.merge(self.params, restored_params)
+            self.opt_state = restored_state['opt_state']
+
+    def save_model(self, file_name: str):
+        # print('dfa_baselines line 445~ in save_model')
+        """Save model (processor weights only) to `file_name`."""
+        os.makedirs(self.checkpoint_path, exist_ok=True)
+        to_save = {'params': self.params, 'opt_state': self.opt_state}
+        path = os.path.join(self.checkpoint_path, file_name)
+        with open(path, 'wb') as f:
+            pickle.dump(to_save, f)
+
     def update_model_params_accum(self, grads) -> None:
-        grads = jax.device_put(grads)
-        # print(f'dfa_baseline line 383, grads on {grads.device()}')
+        grads = baselines._maybe_put_replicated(grads)
         self._device_params, self._device_opt_state = self.jitted_accum_opt_update(
             self._device_params, grads, self._device_opt_state, self.opt,
             self._freeze_processor)
@@ -407,24 +628,45 @@ class DFABaselineModel(model.Model):
 
         return losses_
 
-    def restore_model(self, file_name: str, only_load_processor: bool = False):
-        """Restore model from `file_name`."""
-        # print('dfa_baselines line 433~ in restore_model')
-        path = os.path.join(self.checkpoint_path, file_name)
-        with open(path, 'rb') as f:
-            restored_state = pickle.load(f)
-            if only_load_processor:
-                restored_params = baselines._filter_in_processor(restored_state['params'])
-            else:
-                restored_params = restored_state['params']
-            self.params = hk.data_structures.merge(self.params, restored_params)
-            self.opt_state = restored_state['opt_state']
+    # def compute_loss(
+    #         self,
+    #         rng_key: hk.PRNGSequence,
+    #         feedback: _Feedback,
+    #         algorithm_index: Optional[int] = None,
+    # ) -> float:
+    #     """Compute gradients."""
+    #
+    #     if algorithm_index is None:
+    #         assert len(self._spec) == 1
+    #         algorithm_index = 0
+    #     assert algorithm_index >= 0
+    #     # print('dfa_baselines line 290~ in compute_loss')
+    #     # Calculate gradients.
+    #     rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+    #     feedback = baselines._maybe_pmap_data(feedback)
+    #     loss, _ = self.jitted_grad(
+    #         self._device_params, rng_keys, feedback, algorithm_index)
+    #     loss = baselines._maybe_pick_first_pmapped(loss)
+    #     return loss
 
-    def save_model(self, file_name: str):
-        # print('dfa_baselines line 445~ in save_model')
-        """Save model (processor weights only) to `file_name`."""
-        os.makedirs(self.checkpoint_path, exist_ok=True)
-        to_save = {'params': self.params, 'opt_state': self.opt_state}
-        path = os.path.join(self.checkpoint_path, file_name)
-        with open(path, 'wb') as f:
-            pickle.dump(to_save, f)
+# @functools.partial(jax.jit, static_argnums=1)
+# def _pmap_data(data: Union[_Feedback, _Features], n_devices: int):
+#     """Replicate/split feedback or features for pmapping."""
+#     if isinstance(data, _Feedback):
+#         features = data.features
+#     else:
+#         features = data
+#     pmap_data = features._replace(
+#         input_dp_list=baselines._pmap_reshape(features.input_dp_list, n_devices),
+#         trace_h=baselines._pmap_reshape(features.trace_h, n_devices, split_axis=1),
+#         padded_edge_indices_dict=baselines._pmap_reshape(features.padded_edge_indices_dict, n_devices),
+#         mask_dict=baselines._pmap_reshape(features.mask_dict, n_devices),
+#     )
+#     return pmap_data
+#
+#
+# def _maybe_pmap_data(data: Union[_Feedback, _Features]):
+#     n_devices = jax.local_device_count()
+#     if n_devices == 1:
+#         return data
+#     return _pmap_data(data, n_devices)

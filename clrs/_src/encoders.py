@@ -116,6 +116,7 @@ def accum_node_fts(encoders, dp: _DataPoint, node_fts: _Array) -> _Array:
   if ((dp.location == _Location.NODE and not is_pointer) or
       (dp.location == _Location.GRAPH and dp.type_ == _Type.POINTER)):
     encoding = _encode_inputs(encoders, dp)
+    # print(f'encoders line 119, encoding: {encoding.shape}; node_fts: {node_fts.shape}; name: {dp.name}')
     node_fts += encoding
 
   return node_fts

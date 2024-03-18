@@ -61,3 +61,5 @@ from clrs._src.algorithms.dfa_algotithms import liveness
 from clrs._src.algorithms.dfa_algotithms import reachability
 from clrs._src.algorithms.dfa_algotithms import dominance
 from clrs._src.algorithms.dfa_algotithms import dfa
+from clrs._src.algorithms.dfa_algotithms import dfa_v1
+from clrs._src.algorithms.dfa_algotithms import dfa_v2
