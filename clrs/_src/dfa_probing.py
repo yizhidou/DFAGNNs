@@ -234,8 +234,8 @@ def finalize_for_dfa(probes: _ProbesDict,
 def finalize_for_dfa_v1(probes: _ProbesDict,
                         expected_nb_nodes: int,
                         expected_nb_cfg_edges: int,
-                        # expected_nb_gkt_edge: int,
-                        expected_hint_len: int):
+                        expected_hint_len: int,
+                        full_trace_len: int):
     """Finalizes a `ProbesDict` by stacking/squeezing `data` field."""
     padding_node_idx = expected_nb_nodes - 1
     nb_nodes = None
@@ -348,7 +348,8 @@ def finalize_for_dfa_v1(probes: _ProbesDict,
     edge_indices_dict = dict(cfg_indices_padded=cfg_indices_padded, )
     mask_dict = dict(nb_nodes=nb_nodes,
                      nb_cfg_edges=nb_cfg_edges,
-                     hint_len=hint_len)
+                     hint_len=hint_len,
+                     full_trace_len=full_trace_len)
     # print('dfa_probing line 226')
     # print(f'cfg_inidices_padded: {cfg_indices_padded.shape} \n{cfg_indices_padded}')
     # tmp = probes[specs.Stage.INPUT][specs.Location.NODE]['gen_vectors']['data']

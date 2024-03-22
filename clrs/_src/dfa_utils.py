@@ -363,7 +363,7 @@ class SampleLoader:
         printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
         # if self.sample_path_processor.statistics_savepath:
         #     self._merge_statistics(sample_id, sample_statistics)
-        print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
+        # print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
         if self.if_sync and printed_trace_len > self.expected_trace_len and not self.trace_sample_from_start:
             trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
         else:
@@ -379,7 +379,7 @@ class SampleLoader:
         if self.for_get_statistics:
             return num_pp
         if self.dfa_version is not None:
-            return trace_list, array_list
+            return trace_list, array_list, printed_trace_len
         else:
             if_pp, if_ip = self._get_node_type(task_name=task_name,
                                                selected_ip_indices_base=selected_ip_indices_base,
@@ -518,6 +518,9 @@ def parse_params(params_hash: str,
         version_of_DFANet = 5
     elif params_dict['processor']['kind'] == 'gnn_v6':
         version_of_DFANet = 6
+    elif params_dict['processor']['kind'] == 'gnn_v7':
+        assert params_dict['dfa_net']['dfa_version'] == 2
+        version_of_DFANet = 7
     else:
         print('unrecognized version of GNN_kind!')
         raise DFAException(DFAException.UNRECOGNIZED_GNN_TYPE)

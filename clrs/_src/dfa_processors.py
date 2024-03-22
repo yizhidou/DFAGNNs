@@ -640,7 +640,7 @@ def get_dfa_processor_factory(kind: str,
                 processor = GNNV4_min()
             else:
                 raise ValueError('Unexpected aggregator: ' + aggregator)
-        elif kind == 'gnn_v6':
+        elif kind == 'gnn_v6' or kind == 'gnn_v7':
             if aggregator == 'sum':
                 processor = GNNV6_sum()
             elif aggregator == 'max':

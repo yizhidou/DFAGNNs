@@ -2,7 +2,7 @@ import os.path
 import pickle, json
 import argparse
 import numpy as np
-from typing import Optional
+from typing import Optional, List
 from clrs._src import dfa_utils, dfa_samplers, dfa_processors, dfa_baselines
 
 import haiku as hk
@@ -33,7 +33,7 @@ def filter_sample_list(statistics_savepath,
 def test(test_info_savedir: str,
          test_info_filename: str,
          statistics_filepath: str,
-         ckpt_idx: Optional[int],
+         ckpt_idx_list: List[int],
          if_clear, if_log):
     test_info_hash, test_info_savepath = dfa_utils.rename_params_file(params_savedir=test_info_savedir,
                                                                       params_filename=test_info_filename,
@@ -76,32 +76,37 @@ def test(test_info_savedir: str,
     dfa_baseline_model.init(features=init_feedback.features,
                             seed=test_info_dict['random_seed'] + 1)
     ckpt_savedir = trained_model_params_dict['baseline_model']['checkpoint_path']
+    test_log_savedir = os.path.join(test_info_dict['test_log_savedir'], f'{trained_model_params_id}_trained', f'{test_info_hash}_test')
+    os.makedirs(test_log_savedir, exist_ok=True)
+    test_log_savepath_list = []
     ckpt_filename_list = []
-    if ckpt_idx is None:
+    if ckpt_idx_list is None:
         #   test all the ckpts
         ckpt_count = 0
         for fn in os.listdir(ckpt_savedir):
             if not fn.startswith('.'):
                 ckpt_count += 1
         for idx in range(ckpt_count):
-            ckpt_filename_list.append(f'{trained_model_params_id}.epoch_{idx + 1}')
+            ckpt_filename_list.append(f'{trained_model_params_id}.epoch_{idx}')
+            test_log_savepath_list.append(os.path.join(test_log_savedir, f'epoch_{idx}.test_log'))
     else:
-        ckpt_filename_list.append(f'{trained_model_params_id}.epoch_{ckpt_idx}')
+        for ckpt_idx in ckpt_idx_list:
+            ckpt_filename_list.append(f'{trained_model_params_id}.epoch_{ckpt_idx}')
+            test_log_savepath_list.append(os.path.join(test_log_savedir, f'epoch_{ckpt_idx}.test_log'))
 
     rng_key = jax.random.PRNGKey(rng.randint(2 ** 32))
-    test_log_savepath = os.path.join(test_info_dict['test_log_savedir'], f'{test_info_hash}.test_log')
-    if os.path.isfile(test_log_savepath) and if_clear and if_log:
-        os.system(f'rm {test_log_savepath}')
-        print('old log has been removed!')
+    # test_log_savepath = os.path.join(test_info_dict['test_log_savedir'], f'{test_info_hash}.test_log')
+    # if os.path.isfile(test_log_savepath) and if_clear and if_log:
+    #     os.system(f'rm {test_log_savepath}')
+    #     print('old log has been removed!')
     log_str = ''
-    for ckpt_filename in ckpt_filename_list:
+    for ckpt_filename, test_log_savepath in zip(ckpt_filename_list, test_log_savepath_list):
         ckpt_idx = ckpt_filename.split('_')[-1].strip()
         print(f'ckpt_{ckpt_idx} on testing...')
         # ckpt_savepath = os.path.join(ckpt_savedir, ckpt_filename)
         # with open(ckpt_savepath, 'rb') as f:
         #     restored_model_params_state = pickle.load(f)
-        print(
-            f'dfa_test line 96, dfa_baseline_model.ckpt_path = {dfa_baseline_model.checkpoint_path}; ckpt_file_name = {ckpt_filename}')
+        # print(f'dfa_test line 96, dfa_baseline_model.ckpt_path = {dfa_baseline_model.checkpoint_path}; ckpt_file_name = {ckpt_filename}')
         # dfa_baseline_model.params = hk.data_structures.merge(dfa_baseline_model.params,
         #                                                      restored_model_params_state['params'])
         # dfa_baseline_model.opt_state = restored_model_params_state['opt_state']
@@ -113,12 +118,13 @@ def test(test_info_savedir: str,
         # pos_num_accum, total_num_accum = 0.0, 0.0
         while test_batch_idx < test_info_dict['num_steps_per_ckpt']:
             task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
+            full_trace_len_this_batch = test_feedback_batch.features.mask_dict['full_trace_len']
             new_rng_key, rng_key = jax.random.split(rng_key)
             test_precision, test_recall, test_f1, _, _ = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=test_feedback_batch)
             if task_name_this_batch is not None:
-                new_log_str = f'test with ckpt_{ckpt_idx} batch_{int(test_batch_idx)} ({task_name_this_batch}): precision = {test_precision}; recall = {test_recall}; F1 = {test_f1}\n'
+                new_log_str = f'test with ckpt_{ckpt_idx} batch_{int(test_batch_idx)} ({task_name_this_batch}): full_trace_len = {full_trace_len_this_batch}; precision = {test_precision}; recall = {test_recall}; F1 = {test_f1}\n'
                 if task_name_this_batch == 'liveness':
                     liveness_test_precision_accum += test_precision
                     liveness_test_recall_accum += test_recall
@@ -159,8 +165,13 @@ def test(test_info_savedir: str,
         log_str += new_log_str
         # print(f'positive_num = {pos_num_accum / test_batch_idx}; total_num = {total_num_accum / test_batch_idx}; pos_percentage = {pos_num_accum / total_num_accum}')
         if if_log:
-            with open(test_log_savepath, 'a') as log_recorder:
-                log_recorder.write(log_str)
+            if if_clear:
+                with open(test_log_savepath, 'w') as log_recorder:
+                    log_recorder.write(log_str)
+            else:
+                if os.path.isfile(test_log_savepath):
+                    print(f'{test_log_savepath} has already existed! please specify if it should be cleared!')
+                    exit(174)
         del log_str
         log_str = ''
 
@@ -168,7 +179,7 @@ def test(test_info_savedir: str,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Please input the params filename')
     parser.add_argument('--params', type=str, required=True)
-    parser.add_argument('--ckpt_idx', type=int, default=None, required=False)
+    parser.add_argument('--ckpt_idx', type=int, nargs="+", default=None, required=False)
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--unlog', action='store_true')
     args = parser.parse_args()
@@ -180,6 +191,6 @@ if __name__ == '__main__':
     test(test_info_savedir=test_info_savedir,
          test_info_filename=args.params,
          statistics_filepath=statistics_filepath,
-         ckpt_idx=args.ckpt_idx,
+         ckpt_idx_list=args.ckpt_idx,
          if_clear=args.clear,
          if_log=not args.unlog)

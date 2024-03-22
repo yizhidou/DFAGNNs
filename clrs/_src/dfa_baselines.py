@@ -248,6 +248,23 @@ class DFABaselineModel(model.Model):
                                                                    algorithm_index,
                                                                    return_hints,
                                                                    return_all_outputs)
+            elif version_of_DFANet == 7:
+                return dfa_nets.DFANet_v7(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
 
             assert False
 

@@ -238,7 +238,7 @@ def dfa_v2(dfa_sample_loader: dfa_utils.SampleLoader,
            sample_id: str,
            task_name: str):
     '''sparse version'''
-    trace_list, array_list = dfa_sample_loader.load_a_sample(task_name=task_name,
+    trace_list, array_list, full_trace_len = dfa_sample_loader.load_a_sample(task_name=task_name,
                                                              sample_id=sample_id)
     gen_vectors, kill_vectors, cfg_edges = array_list
     # print(f'algo line 243, gen_vectors: {gen_vectors.shape}')
@@ -288,5 +288,6 @@ def dfa_v2(dfa_sample_loader: dfa_utils.SampleLoader,
     edge_indices_dict, mask_dict = dfa_probing.finalize_for_dfa_v1(probes=probes,
                                                                    expected_nb_nodes=dfa_sample_loader.max_num_pp,
                                                                    expected_nb_cfg_edges=expected_nb_cfg_edges,
-                                                                   expected_hint_len=dfa_sample_loader.expected_trace_len)  # used to be expected_hint_len
+                                                                   expected_hint_len=dfa_sample_loader.expected_trace_len,
+                                                                   full_trace_len=full_trace_len)  # used to be expected_hint_len
     return edge_indices_dict, mask_dict, probes
