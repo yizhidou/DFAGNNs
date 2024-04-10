@@ -12,6 +12,7 @@ import jax
 def filter_sample_list(statistics_savepath,
                        errored_sample_ids,
                        max_num_pp,
+                       min_num_pp,
                        sample_id_savepath):
     with open(statistics_savepath) as statistics_loader:
         statistics_dict = json.load(statistics_loader)
@@ -21,7 +22,7 @@ def filter_sample_list(statistics_savepath,
         for line in sample_ids_loader.readlines():
             sample_id = line.strip()
             if sample_id in statistics_dict:
-                if statistics_dict[sample_id] > max_num_pp:
+                if statistics_dict[sample_id] > max_num_pp or statistics_dict[sample_id] < min_num_pp:
                     continue
             else:
                 assert sample_id in errored_sample_ids
@@ -34,7 +35,7 @@ def test(test_info_savedir: str,
          test_info_filename: str,
          statistics_filepath: str,
          ckpt_idx_list: List[int],
-         if_clear, if_log):
+         if_clear, if_log, check_trace):
     test_info_hash, test_info_savepath = dfa_utils.rename_params_file(params_savedir=test_info_savedir,
                                                                       params_filename=test_info_filename,
                                                                       if_test_params=True)
@@ -55,12 +56,17 @@ def test(test_info_savedir: str,
     test_sample_loader = dfa_utils.SampleLoader(sample_path_processor=sample_path_processor,
                                                 seed=rng.randint(2 ** 32),
                                                 **test_info_dict['test_sample_loader'])
+    if 'min_num_pp' not in test_info_dict['test_sample_loader']:
+        test_info_dict['test_sample_loader']['min_num_pp'] = 0
     test_sampler = dfa_samplers.DFASampler(task_name=trained_model_params_dict['task']['task_name'],
                                            sample_id_list=filter_sample_list(statistics_savepath=statistics_filepath,
                                                                              errored_sample_ids=sample_path_processor.errored_sample_ids,
                                                                              max_num_pp=
                                                                              test_info_dict['test_sample_loader'][
                                                                                  'max_num_pp'],
+                                                                             min_num_pp=
+                                                                             test_info_dict['test_sample_loader'][
+                                                                                 'min_num_pp'],
                                                                              sample_id_savepath=
                                                                              test_info_dict['dfa_sampler'][
                                                                                  'test_sample_id_savepath']),
@@ -76,7 +82,8 @@ def test(test_info_savedir: str,
     dfa_baseline_model.init(features=init_feedback.features,
                             seed=test_info_dict['random_seed'] + 1)
     ckpt_savedir = trained_model_params_dict['baseline_model']['checkpoint_path']
-    test_log_savedir = os.path.join(test_info_dict['test_log_savedir'], f'{trained_model_params_id}_trained', f'{test_info_hash}_test')
+    test_log_savedir = os.path.join(test_info_dict['test_log_savedir'], f'{trained_model_params_id}_trained',
+                                    f'{test_info_hash}_test')
     os.makedirs(test_log_savedir, exist_ok=True)
     test_log_savepath_list = []
     ckpt_filename_list = []
@@ -120,9 +127,10 @@ def test(test_info_savedir: str,
             task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
             full_trace_len_this_batch = test_feedback_batch.features.mask_dict['full_trace_len']
             new_rng_key, rng_key = jax.random.split(rng_key)
-            test_precision, test_recall, test_f1, _, _ = dfa_baseline_model.get_measures(
+            test_precision, test_recall, test_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
-                feedback=test_feedback_batch)
+                feedback=test_feedback_batch,
+                return_hints=check_trace)
             if task_name_this_batch is not None:
                 new_log_str = f'test with ckpt_{ckpt_idx} batch_{int(test_batch_idx)} ({task_name_this_batch}): full_trace_len = {full_trace_len_this_batch}; precision = {test_precision}; recall = {test_recall}; F1 = {test_f1}\n'
                 if task_name_this_batch == 'liveness':
@@ -182,6 +190,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_idx', type=int, nargs="+", default=None, required=False)
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--unlog', action='store_true')
+    parser.add_argument('--check_trace', action='store_true')
     args = parser.parse_args()
     test_info_savedir = '/data_hdd/lx20/yzd_workspace/Params/TestInfoPOJ104/'
     statistics_filepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/POJ104Statistics/poj104_statistics.json'
@@ -193,4 +202,5 @@ if __name__ == '__main__':
          statistics_filepath=statistics_filepath,
          ckpt_idx_list=args.ckpt_idx,
          if_clear=args.clear,
-         if_log=not args.unlog)
+         if_log=not args.unlog,
+         check_trace=args.check_trace)

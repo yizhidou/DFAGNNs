@@ -265,6 +265,23 @@ class DFABaselineModel(model.Model):
                                                                    algorithm_index,
                                                                    return_hints,
                                                                    return_all_outputs)
+            elif version_of_DFANet == 8:
+                return dfa_nets.DFANet_v8(spec=self._spec,
+                                          hidden_dim=hidden_dim,
+                                          encode_hints=encode_hints,
+                                          decode_hints=self.decode_hints,
+                                          processor_factory=processor_factory,
+                                          use_lstm=use_lstm,
+                                          encoder_init=encoder_init,
+                                          dropout_prob=dropout_prob,
+                                          hint_teacher_forcing=hint_teacher_forcing,
+                                          hint_repred_mode=hint_repred_mode,
+                                          take_hint_as_outpt=self.take_hint_as_outpt,
+                                          dfa_version=dfa_version)(features_list,
+                                                                   repred,
+                                                                   algorithm_index,
+                                                                   return_hints,
+                                                                   return_all_outputs)
 
             assert False
 
@@ -475,8 +492,14 @@ class DFABaselineModel(model.Model):
         #                             )
         if self._spec[algorithm_index]['trace_o'][-1] == specs.Type.MASK:
             outs = (outs > 0.0) * 1.0
+            if return_hints:
+                # assert hint_preds is not None
+                hint_preds = (hint_preds > 0.0) * 1.0
         else:
             outs = jnp.argmax(outs, -1)
+            if return_hints:
+                # assert hint_preds is not None
+                hint_preds = jnp.argmax(hint_preds, -1)
         return outs, hint_preds
 
     def predict(self, rng_key: hk.PRNGSequence, features: _Features,
@@ -497,44 +520,29 @@ class DFABaselineModel(model.Model):
                 return_hints,
                 return_all_outputs))
 
-    def get_measures(self, rng_key: hk.PRNGSequence,
-                     feedback: _Feedback,
-                     algorithm_index: Optional[int] = None,
-                     return_hints: bool = False,
-                     return_all_outputs: bool = False
-                     ):
-        if algorithm_index is None:
-            assert len(self._spec) == 1
-            algorithm_index = 0
-        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
-        features = baselines._maybe_pmap_data(feedback.features)
-        trace_o_pred, trace_h_pred = self.jitted_predict(self._device_params, rng_keys, features,
-                                                         algorithm_index,
-                                                         return_hints,
-                                                         return_all_outputs)
-
-        if feedback.trace_o._type_ == specs.Type.MASK:
-            # Mask out the -1 values in truth
-            mask = feedback.trace_o.data != specs.OutputClass.MASKED
+    def _calculate_measures(self,
+                            type: str,
+                            mask,
+                            truth_data,
+                            pred_data):
+        if type == specs.Type.MASK:
             # Convert predictions to binary by thresholding
-            preds_masked = trace_o_pred[mask]
-            truth_data_masked = feedback.trace_o.data[mask]
+            preds_masked = pred_data[mask]
+            truth_data_masked = truth_data[mask]
 
             # Calculate true positives, false positives, and false negatives
             tp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
             fp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked < 0.5, 1, 0))
             fn = jnp.sum(jnp.where(preds_masked < 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
         else:
-            mask = feedback.trace_o.data[..., 0] != specs.OutputClass.MASKED
-            preds_masked = trace_o_pred[mask]
-            truth_data_masked = jnp.argmax(feedback.trace_o.data[mask], -1)
+            preds_masked = pred_data[mask]
+            truth_data_masked = jnp.argmax(truth_data[mask], -1)
             # print(f'dfa_baseline line 482, preds = {preds_masked}; truth = {truth_data_masked}')
 
             tp = jnp.sum(preds_masked * truth_data_masked)
             fp = jnp.sum(preds_masked * (1 - truth_data_masked))
             fn = jnp.sum((1 - preds_masked) * truth_data_masked)
-
-        print(f'dfa_baseline line 489, tp = {tp}; fp = {fp}; fn = {fn}')
+        # print(f'dfa_baseline line 489, tp = {tp}; fp = {fp}; fn = {fn}')
         if tp + fp > 0:
             precision = tp / (tp + fp)
         else:
@@ -550,19 +558,19 @@ class DFABaselineModel(model.Model):
         else:
             # f_1 = jnp.array([0.])
             f_1 = 0.0
-        positive_num = jnp.sum(truth_data_masked)
-        total_num = 1
-        for i in truth_data_masked.shape:
-            total_num *= i
+        # positive_num = jnp.sum(truth_data_masked)
+        # total_num = 1
+        # for i in truth_data_masked.shape:
+        #     total_num *= i
 
-        return precision, recall, f_1, positive_num, total_num
+        return precision, recall, f_1
 
-    def get_measures_deprecated(self, rng_key: hk.PRNGSequence,
-                                feedback: _Feedback,
-                                algorithm_index: Optional[int] = None,
-                                return_hints: bool = False,
-                                return_all_outputs: bool = False
-                                ):
+    def get_measures(self, rng_key: hk.PRNGSequence,
+                     feedback: _Feedback,
+                     algorithm_index: Optional[int] = None,
+                     return_hints: bool = False,
+                     return_all_outputs: bool = False
+                     ):
         if algorithm_index is None:
             assert len(self._spec) == 1
             algorithm_index = 0
@@ -572,25 +580,79 @@ class DFABaselineModel(model.Model):
                                                          algorithm_index,
                                                          return_hints,
                                                          return_all_outputs)
-        # Mask out the -1 values in truth
-        mask = feedback.trace_o.data != specs.OutputClass.MASKED
-        # Convert predictions to binary by thresholding
-        preds_binary = jnp.where(trace_o_pred > 0, 1, 0)
-        preds_binary = preds_binary[mask]
-        truth_data_masked = feedback.trace_o.data[mask]
+        type_ = feedback.trace_o._type_
+        if type_ == specs.Type.MASK:
+            mask = feedback.trace_o.data != specs.OutputClass.MASKED
+            # truth_trace_o = feedback.trace_o.data
+        else:
+            # assert type_ == specs.Type.CATEGORICAL
+            mask = feedback.trace_o.data[..., 0] != specs.OutputClass.MASKED
+            # truth_trace_o = jnp.argmax(feedback.trace_o.data, -1)
+        if trace_h_pred is not None:
+            # print(f'dfa_baselines line 520, return_hints = {return_hints};')
+            # print(
+            #     f'the shape of trace_h_pred is {trace_h_pred.shape};\nthe shape of truth.trace_h is: {jnp.argmax(feedback.features.trace_h.data[1:, ...], -1).shape}')
+            # print(f'the shape of trace_o is: {trace_o_pred.shape}')
+            trace_h_f1_list = []
+            for time_step in range(trace_h_pred.shape[0]-1):
+                pred_trace_h_i = trace_h_pred[time_step]
+                if type_ == specs.Type.CATEGORICAL:
+                    truth_trace_h_i = feedback.features.trace_h.data[time_step+1]
+                else:
+                    truth_trace_h_i = feedback.features.trace_h.data[time_step+1]
+                precision_of_this_step, recall_of_this_step, f_1_of_this_step = self._calculate_measures(type=type_,
+                                                                                                         mask=mask,
+                                                                                                         truth_data=truth_trace_h_i,
+                                                                                                         pred_data=pred_trace_h_i)
+                trace_h_f1_list.append(f_1_of_this_step.item())
+            print('dfa_baselines line 586, trace_h_f1_list is:')
+            print(trace_h_f1_list)
 
-        # Calculate true positives, false positives, and false negatives
-        tp = jnp.sum(preds_binary * truth_data_masked)
-        fp = jnp.sum(preds_binary * (1 - truth_data_masked))
-        fn = jnp.sum((1 - preds_binary) * truth_data_masked)
-
-        # Calculate precision and recall
-        precision = tp / (tp + fp)
-        recall = tp / (tp + fn)
-
-        # Calculate F1 score
-        f1_score = 2 * precision * recall / (precision + recall)
-        return precision, recall, f1_score
+        # truth_trace_o = jnp.argmax(feedback.trace_o.data[mask], -1) if type_ == specs.Type.CATEGORICAL else feedback.trace_o.data[mask]
+        return self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)
+        # if feedback.trace_o._type_ == specs.Type.MASK:
+        #     # Mask out the -1 values in truth
+        #     mask = feedback.trace_o.data != specs.OutputClass.MASKED
+        #     # Convert predictions to binary by thresholding
+        #     preds_masked = trace_o_pred[mask]
+        #     truth_data_masked = feedback.trace_o.data[mask]
+        #
+        #     # Calculate true positives, false positives, and false negatives
+        #     tp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
+        #     fp = jnp.sum(jnp.where(preds_masked > 0.5, 1, 0) * jnp.where(truth_data_masked < 0.5, 1, 0))
+        #     fn = jnp.sum(jnp.where(preds_masked < 0.5, 1, 0) * jnp.where(truth_data_masked > 0.5, 1, 0))
+        # else:
+        #     mask = feedback.trace_o.data[..., 0] != specs.OutputClass.MASKED
+        #     preds_masked = trace_o_pred[mask]
+        #     truth_data_masked = jnp.argmax(feedback.trace_o.data[mask], -1)
+        #     # print(f'dfa_baseline line 482, preds = {preds_masked}; truth = {truth_data_masked}')
+        #
+        #     tp = jnp.sum(preds_masked * truth_data_masked)
+        #     fp = jnp.sum(preds_masked * (1 - truth_data_masked))
+        #     fn = jnp.sum((1 - preds_masked) * truth_data_masked)
+        #
+        # print(f'dfa_baseline line 489, tp = {tp}; fp = {fp}; fn = {fn}')
+        # if tp + fp > 0:
+        #     precision = tp / (tp + fp)
+        # else:
+        #     # precision = jnp.array([1.])
+        #     precision = 1.0
+        # if tp + fn > 0:
+        #     recall = tp / (tp + fn)
+        # else:
+        #     # recall = jnp.array([1.])
+        #     recall = 1.0
+        # if precision + recall > 0.0:
+        #     f_1 = 2.0 * precision * recall / (precision + recall)
+        # else:
+        #     # f_1 = jnp.array([0.])
+        #     f_1 = 0.0
+        # positive_num = jnp.sum(truth_data_masked)
+        # total_num = 1
+        # for i in truth_data_masked.shape:
+        #     total_num *= i
+        #
+        # return precision, recall, f_1, positive_num, total_num
 
     def restore_model(self, file_name: str, only_load_processor: bool = False):
         """Restore model from `file_name`."""

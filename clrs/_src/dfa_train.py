@@ -203,7 +203,7 @@ def train(params_savedir, params_filename,
             #     exit(666)
             # loss NaN debug 2 over
             new_rng_key, rng_key = jax.random.split(rng_key)
-            train_precision, train_recall, train_f1, _, _ = dfa_baseline_model.get_measures(
+            train_precision, train_recall, train_f1= dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=train_feedback_batch)
             if task_name_for_this_batch is not None:

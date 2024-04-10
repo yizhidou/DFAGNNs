@@ -316,17 +316,27 @@ class DFANet(nets.Net):
             hard_postprocess = (self._hint_repred_mode == 'hard' or
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))
             if hard_postprocess:
+                if self.dfa_version is None or self.dfa_version == 0:
+                    type_of_trace_h_i = specs.Type.MASK
+                    post_processed_data_hard = (mp_state.pred_trace_h_i > 0.0) * 1.0
+                else:
+                    type_of_trace_h_i = specs.Type.CATEGORICAL
+                    post_processed_data_hard =hk.one_hot(jnp.argmax(mp_state.pred_trace_h_i, -1), 2)
                 decoded_trace_h_i = probing.DataPoint(name='trace_h',
                                                       location=specs.Location.EDGE if self.dfa_version is None else specs.Location.NODE,
-                                                      type_=specs.Type.MASK if (
-                                                              self.dfa_version is None or self.dfa_version == 0) else specs.Type.CATEGORICAL,
-                                                      data=(mp_state.pred_trace_h_i > 0.0) * 1.0)
+                                                      type_=type_of_trace_h_i,
+                                                      data=post_processed_data_hard)
             else:
+                if self.dfa_version is None or self.dfa_version == 0:
+                    type_of_trace_h_i = specs.Type.MASK
+                    post_processed_data = jax.nn.sigmoid(mp_state.pred_trace_h_i)
+                else:
+                    type_of_trace_h_i = specs.Type.CATEGORICAL
+                    post_processed_data = jax.nn.softmax(mp_state.pred_trace_h_i, axis=-1)
                 decoded_trace_h_i = probing.DataPoint(name='trace_h',
                                                       location=specs.Location.EDGE if self.dfa_version is None else specs.Location.NODE,
-                                                      type_=specs.Type.MASK if (
-                                                              self.dfa_version is None or self.dfa_version == 0) else specs.Type.CATEGORICAL,
-                                                      data=jax.nn.sigmoid(mp_state.pred_trace_h_i))
+                                                      type_=type_of_trace_h_i,
+                                                      data=post_processed_data)
             if repred:
                 trace_h_i = decoded_trace_h_i
             elif self._hint_teacher_forcing < 1.0:
@@ -635,7 +645,7 @@ class DFANet_v4(DFANet):
             node_fts=node_fts,
             edge_fts=cfg_edge_fts,
             hint_state=encoders._encode_inputs(encoders=encs['trace_h'],
-                                               dp=trace_h_i) if self.encode_hints else hidden,
+                                               dp=trace_h_i) if self.encode_hints or first_step else hidden,
             cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'])
         if not repred:  # dropout only on training
             new_hint_state = hk.dropout(hk.next_rng_key(), self._dropout_prob, new_hint_state)
@@ -824,6 +834,73 @@ class DFANet_v7(DFANet):
         # print('dfa_nets line 510, in dfa_nets._dfa_one_step_pred, after prediction:')
         # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
         return new_hint_state, pred_trace_o, pred_trace_h_i, nxt_lstm_state
+
+class DFANet_v8(DFANet):
+    def _dfa_one_step_pred(
+            self,
+            hidden: Optional[_chex_Array],  # not used in this version
+            input_dp_list: _Trajectory,
+            trace_h_i: probing.DataPoint,
+            batch_size: int,
+            node_fts_shape_lead: Tuple[int],
+            nb_edges_padded: int,  # cfg edges
+            padded_edge_indices_dict: Dict[str, _chex_Array],  # only cfg edges
+            lstm_state: Optional[hk.LSTMState],
+            encs: Dict[str, List[hk.Module]],
+            decs: Dict[str, Tuple[hk.Module]],
+            repred: bool,
+            first_step: bool
+    ):
+        """Generates one-step predictions."""
+        nb_nodes, nb_bits_each = node_fts_shape_lead
+        node_fts = jnp.zeros((batch_size, nb_nodes, nb_bits_each, self.hidden_dim))
+        cfg_edge_fts = jnp.zeros((batch_size, nb_edges_padded, self.hidden_dim))
+
+        # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Encode node/edge/graph features from inputs and (optionally) hints.
+        dp_list_to_encode = input_dp_list[:]
+        if self.encode_hints or first_step:
+            dp_list_to_encode.append(trace_h_i)
+        for dp in dp_list_to_encode:
+            encoder = encs[dp.name]
+            if dp.location == specs.Location.EDGE:
+                cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
+            if dp.location == specs.Location.NODE:
+                node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
+
+        nxt_hidden = self.processor(
+            node_fts=node_fts,
+            edge_fts=cfg_edge_fts,
+            hidden=hidden,
+            cfg_indices_padded=padded_edge_indices_dict['cfg_indices_padded'])
+        if not repred:  # dropout only on training
+            nxt_hidden = hk.dropout(hk.next_rng_key(), self._dropout_prob, nxt_hidden)
+
+        if self.use_lstm:
+            nxt_hidden, nxt_lstm_state = jax.vmap(self.lstm)(inputs=nxt_hidden, prev_state=lstm_state)
+        else:
+            nxt_lstm_state = None
+        # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Decode features and (optionally) hints.
+
+        trace_o_decoder = decs['trace_o'][0]
+        # print(f'dfa_nets line 640 new_hint_state: {new_hint_state.shape}')
+        if self.decode_hints:
+            trace_h_decoder = decs['trace_h'][0]
+            if self.dfa_version is None or self.dfa_version == 0:
+                pred_trace_h_i = jnp.squeeze(trace_h_decoder(nxt_hidden), -1)
+            else:
+                pred_trace_h_i = trace_h_decoder(nxt_hidden)
+            if self.take_hint_as_outpt:
+                pred_trace_o = pred_trace_h_i
+            else:
+                pred_trace_o = jnp.squeeze(trace_o_decoder(nxt_hidden), -1)
+        else:
+            pred_trace_h_i = None
+            pred_trace_o = trace_o_decoder(nxt_hidden)
+        # print('dfa_nets line 510, in dfa_nets._dfa_one_step_pred, after prediction:')
+        # print(f'pred_trace_o: {pred_trace_o.shape}; pred_trace_h_i: {pred_trace_h_i.shape}')
+        return nxt_hidden, pred_trace_o, pred_trace_h_i, nxt_lstm_state
 
 
 def _dfa_data_dimensions(dfa_version,

@@ -6,6 +6,7 @@ import programl
 import hashlib
 import jax
 import jax.numpy as jnp
+import signal
 from clrs._src import dfa_specs, probing
 
 _Array = np.ndarray
@@ -33,6 +34,8 @@ class DFAException(probing.ProbeError):
 
     TOO_LONG_TRACE = 7
 
+    ANALYZE_TIME_OUT= 8
+
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
         self.error_code = error_code
@@ -58,6 +61,8 @@ class DFAException(probing.ProbeError):
             msg += f' sample_id: {self.sample_id}'
         return msg
 
+def timeout_handler(signum, frame):
+    raise DFAException(error_code=DFAException.ANALYZE_TIME_OUT)
 
 class SamplePathProcessor:
     def __init__(self, sourcegraph_dir: str,
@@ -113,7 +118,7 @@ class SampleLoader:
             assert self.max_num_pp is None
         self.if_sync = if_sync
         if self.if_sync:
-            self.max_iteration = 200
+            self.max_iteration = 500
         else:
             self.max_iteration = self.expected_trace_len - 1
         self.dfa_version = dfa_version
@@ -291,8 +296,8 @@ class SampleLoader:
                 kill_vectors = kill_array_dense[selected_ip_indices_base, :].transpose()
                 # [num_pp, selected_num_ip, ]
                 return gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                            if_forward=False,)
-                                                                            # num_pp=num_pp if self.use_self_loops else None)
+                                                                            if_forward=False, )
+                # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
                 # [num_pp * selected_num_ip, ]
@@ -324,8 +329,8 @@ class SampleLoader:
                 kill_vectors = np.zeros((num_pp, self.selected_num_ip), dtype=int)
                 # [num_pp, selected_num_ip]
                 return gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                            if_forward=True if task_name == 'dominance' else False,)
-                                                                            # num_pp=num_pp if self.use_self_loops else None)
+                                                                            if_forward=True if task_name == 'dominance' else False, )
+                # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
                 # [num_pp * selected_num_ip, ]
@@ -343,7 +348,10 @@ class SampleLoader:
         assert task_name in ['liveness', 'dominance', 'reachability']
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise DFAException(DFAException.RECORDED_ERRORED_SAMPLE, sample_id)
-        cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(5)
+        try:
+            cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
                                                  max_iteration=self.max_iteration,
                                                  program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
                                                      sample_id),
@@ -351,6 +359,11 @@ class SampleLoader:
                                                  result_savepath=None,
                                                  if_sync=self.if_sync,
                                                  if_idx_reorganized=self.if_idx_reorganized)
+        except DFAException as e:
+            print(f'error happens during analyze! error_code = {e.error_code}')
+            self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_TIME_OUT
+            raise e
+        signal.alarm(0)
         if len(cpperror) > 0:
             if cpperror.endswith(b'in certain iterations!\n'):
                 print(f'cpp reports that the trace length exceeds {self.max_iteration}!')
@@ -451,13 +464,14 @@ def parse_params(params_hash: str,
             errored_sample_ids = json.load(errored_sample_ids_loader)
 
         def _create_sample_list(max_num_pp,
+                                min_num_pp,
                                 sample_id_savepath):
             sample_id_list = []
             with open(sample_id_savepath) as sample_ids_loader:
                 for line in sample_ids_loader.readlines():
                     sample_id = line.strip()
                     if sample_id in statistics_dict:
-                        if statistics_dict[sample_id] > max_num_pp:
+                        if statistics_dict[sample_id] > max_num_pp or statistics_dict[sample_id] < min_num_pp:
                             continue
                     else:
                         assert sample_id in errored_sample_ids
@@ -466,14 +480,20 @@ def parse_params(params_hash: str,
             return sample_id_list
 
         # create the list of train set. need to get rid of the ones exceeds max_num_pp or with errors
+        if 'min_num_pp' not in params_dict['train_sample_loader']:
+            params_dict['train_sample_loader']['min_num_pp'] = 0
         train_sample_id_list = _create_sample_list(max_num_pp=params_dict['train_sample_loader']['max_num_pp'],
+                                                   min_num_pp=params_dict['train_sample_loader']['min_num_pp'],
                                                    sample_id_savepath=params_dict['dfa_sampler'][
                                                        'train_sample_id_savepath'])
         params_dict['dfa_sampler']['train_sample_id_list'] = train_sample_id_list
         del params_dict['dfa_sampler']['train_sample_id_savepath']
 
         # create the list of vali set.
+        if 'min_num_pp' not in params_dict['vali_sample_loader']:
+            params_dict['vali_sample_loader']['min_num_pp'] = 0
         vali_sample_id_list = _create_sample_list(max_num_pp=params_dict['vali_sample_loader']['max_num_pp'],
+                                                  min_num_pp=params_dict['vali_sample_loader']['min_num_pp'],
                                                   sample_id_savepath=params_dict['dfa_sampler'][
                                                       'vali_sample_id_savepath'])
         params_dict['dfa_sampler']['vali_sample_id_list'] = vali_sample_id_list
@@ -521,6 +541,9 @@ def parse_params(params_hash: str,
     elif params_dict['processor']['kind'] == 'gnn_v7':
         assert params_dict['dfa_net']['dfa_version'] == 2
         version_of_DFANet = 7
+    elif params_dict['processor']['kind'] == 'gnn_v8':
+        assert params_dict['dfa_net']['dfa_version'] == 2
+        version_of_DFANet = 8
     else:
         print('unrecognized version of GNN_kind!')
         raise DFAException(DFAException.UNRECOGNIZED_GNN_TYPE)
@@ -532,7 +555,7 @@ def parse_params(params_hash: str,
 def get_statistics_from_dataset(sourcegraph_dir: str,
                                 errorlog_savepath: str,
                                 sample_ids_savepath: str,
-                                statistics_log_savepath: str):
+                                statistics_log_savepath: Optional[str]):
     sample_path_processor = SamplePathProcessor(
         sourcegraph_dir=sourcegraph_dir,
         errorlog_savepath=errorlog_savepath)
@@ -543,15 +566,18 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
                                  selected_num_ip=5,
                                  for_get_statistics=True,
                                  dfa_version=0,
-                                 use_self_loops=True,
+                                 # use_self_loops=True,
                                  if_sync=True,
                                  trace_sample_from_start=True,
                                  seed=6)
-    if not os.path.isfile(statistics_log_savepath) or os.path.getsize(statistics_log_savepath) == 0:
-        statistics_dict = {}
+    if statistics_log_savepath is not None:
+        if not os.path.isfile(statistics_log_savepath) or os.path.getsize(statistics_log_savepath) == 0:
+            statistics_dict = {}
+        else:
+            with open(statistics_log_savepath) as f:
+                statistics_dict = json.load(f)
     else:
-        with open(statistics_log_savepath) as f:
-            statistics_dict = json.load(f)
+        statistics_dict = {}
     count = 0
     with open(sample_ids_savepath) as f:
         for line in f.readlines():
@@ -562,8 +588,9 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
             count += 1
             if count % 5000 == 0:
                 sample_path_processor.dump_errored_samples_to_log()
-                with open(statistics_log_savepath, 'w') as statistics_logger:
-                    json.dump(statistics_dict, statistics_logger, indent=3)
+                if statistics_log_savepath is not None:
+                    with open(statistics_log_savepath, 'w') as statistics_logger:
+                        json.dump(statistics_dict, statistics_logger, indent=3)
             print(f'{count}: {sample_id} id on processing...')
             try:
                 num_pp = sample_loader.load_a_sample(task_name='liveness',
@@ -574,8 +601,9 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
                 print(f'{sample_id} errored! error_code: {e.error_code}')
                 continue
     sample_path_processor.dump_errored_samples_to_log()
-    with open(statistics_log_savepath, 'w') as statistics_logger:
-        json.dump(statistics_dict, statistics_logger, indent=3)
+    if statistics_log_savepath is not None:
+        with open(statistics_log_savepath, 'w') as statistics_logger:
+            json.dump(statistics_dict, statistics_logger, indent=3)
 
 
 def compute_hash(file_path,
@@ -631,11 +659,12 @@ def rename_params_file(params_savedir,
 if __name__ == '__main__':
     # sourcegraph_dir = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/programl_downloaded'
     # errorlog_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/test_error_logs/test_error_log.txt'
+    dataset_name = sys.argv[1]
     sourcegraph_dir = '/data_hdd/lx20/yzd_workspace/Datasets/ProgramlDatasetUnzip/dataflow/graphs'
-    errorlog_savepath = '/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/poj104_errors_max200.txt'
-    test_sample_ids_savepath = '/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/poj_104/test_sample_ids_v1.txt'
-    statistics_log_savepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/POJ104Statistics/poj104_statistics.json'
+    errorlog_savepath = f'/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/{dataset_name}_errors_max500.txt'
+    sample_ids_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/{dataset_name}/{dataset_name}_sample_ids.txt'
+    statistics_log_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_statistics.json'
     get_statistics_from_dataset(sourcegraph_dir=sourcegraph_dir,
                                 errorlog_savepath=errorlog_savepath,
-                                sample_ids_savepath=test_sample_ids_savepath,
+                                sample_ids_savepath=sample_ids_savepath,
                                 statistics_log_savepath=statistics_log_savepath)
