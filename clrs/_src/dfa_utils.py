@@ -34,7 +34,7 @@ class DFAException(probing.ProbeError):
 
     TOO_LONG_TRACE = 7
 
-    ANALYZE_TIME_OUT= 8
+    ANALYZE_TIME_OUT = 8
 
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
@@ -61,8 +61,10 @@ class DFAException(probing.ProbeError):
             msg += f' sample_id: {self.sample_id}'
         return msg
 
+
 def timeout_handler(signum, frame):
     raise DFAException(error_code=DFAException.ANALYZE_TIME_OUT)
+
 
 class SamplePathProcessor:
     def __init__(self, sourcegraph_dir: str,
@@ -99,6 +101,7 @@ class SampleLoader:
                  if_sync: bool,
                  seed: int,
                  max_num_pp: Optional[int],  # set None if use it to get statistics
+                 min_num_pp: Optional[int],
                  # use_self_loops: bool,
                  trace_sample_from_start: bool,
                  dfa_version: Optional[int],
@@ -352,13 +355,13 @@ class SampleLoader:
         signal.alarm(5)
         try:
             cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
-                                                 max_iteration=self.max_iteration,
-                                                 program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
-                                                     sample_id),
-                                                 edge_list_savepath=None,
-                                                 result_savepath=None,
-                                                 if_sync=self.if_sync,
-                                                 if_idx_reorganized=self.if_idx_reorganized)
+                                                     max_iteration=self.max_iteration,
+                                                     program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
+                                                         sample_id),
+                                                     edge_list_savepath=None,
+                                                     result_savepath=None,
+                                                     if_sync=self.if_sync,
+                                                     if_idx_reorganized=self.if_idx_reorganized)
         except DFAException as e:
             print(f'error happens during analyze! error_code = {e.error_code}')
             self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_TIME_OUT
@@ -398,6 +401,41 @@ class SampleLoader:
                                                selected_ip_indices_base=selected_ip_indices_base,
                                                num_pp=num_pp)
             return trace_list, array_list, if_pp, if_ip
+
+    def draw_the_sample(self, sample_id):
+        if sample_id in self.sample_path_processor.errored_sample_ids:
+            raise DFAException(DFAException.RECORDED_ERRORED_SAMPLE, sample_id)
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(5)
+        try:
+            cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name('dominance'),
+                                                     max_iteration=self.max_iteration,
+                                                     program_graph_sourcepath=self.sample_path_processor.sourcegraph_savepath(
+                                                         sample_id),
+                                                     edge_list_savepath=None,
+                                                     result_savepath=None,
+                                                     if_sync=self.if_sync,
+                                                     if_idx_reorganized=self.if_idx_reorganized)
+        except DFAException as e:
+            print(f'error happens during analyze! error_code = {e.error_code}')
+            self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_TIME_OUT
+            raise e
+        signal.alarm(0)
+        if len(cpperror) > 0:
+            if cpperror.endswith(b'in certain iterations!\n'):
+                print(f'cpp reports that the trace length exceeds {self.max_iteration}!')
+                self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_LONG_TRACE
+                raise DFAException(DFAException.TOO_LONG_TRACE, sample_id)
+            else:
+                print('cpp reports an error!')
+                self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_ERRORED_SAMPLE
+                raise DFAException(DFAException.ANALYZE_ERRORED_SAMPLE, sample_id)
+        printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
+        edges_saved_matrix = np.fromstring(edge_chunck, sep=' ', dtype=int)
+        edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
+        num_pp = edges_saved_matrix[0, 0]
+        cfg_edges = edges_saved_matrix[1:, :]
+
 
 
 def _derive_bidirectional_cfg(cfg_indices,
@@ -654,6 +692,40 @@ def rename_params_file(params_savedir,
         print('where is the renamed params file???')
         exit(1)
     return params_hash, new_params_filepath
+
+
+class UtilPathProcessor:
+    AVAILABLE_DATASET_NAMES = ['poj104', 'tensorflow', 'linux', 'opencv', 'opencl', 'npd']
+
+    def trained_model_params_savedir(self, dataset_name):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        return f'/data_hdd/lx20/yzd_workspace/Params/TrainParams/{dataset_name}_TrainParams'
+
+    def train_log_savepath(self, dataset_name, params_hash):
+        log_savedir = f'/data_hdd/lx20/yzd_workspace/Logs/TrainLogs/{dataset_name}_TrainLogs'
+        os.path.join(log_savedir, f'{params_hash}.log')
+
+    def ckpt_savedir(self, dataset_name, params_hash):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        savedir = '/data_hdd/lx20/yzd_workspace/SavedModels'
+        return os.path.join(savedir, f'{dataset_name}_CKPT', f'{params_hash}_ckpt')
+
+    def test_sample_ids_savepath(self, dataset_name):
+        if dataset_name == 'poj104':
+            return '/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/poj_104/test_sample_ids_v1.txt'
+        return f'/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/{dataset_name}/{dataset_name}_sample_ids.txt'
+    def test_info_savedir(self, dataset_name):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        return f'/data_hdd/lx20/yzd_workspace/Params/TestInfo/{dataset_name}_TestInfo'
+
+    def test_log_savedir(self, dataset_name, trained_model_params_id, test_info_hash):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        savedir = f'/data_hdd/lx20/yzd_workspace/Logs/TestLogs/{dataset_name}_TestLogs'
+        return os.path.join(savedir, f'{trained_model_params_id}_trained', f'{test_info_hash}_test')
+
+    def statistics_filepath(self, dataset_name):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        return f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_Statistics/{dataset_name}_statistics.json'
 
 
 if __name__ == '__main__':

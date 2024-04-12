@@ -33,16 +33,17 @@ class DFASampler(samplers.Sampler):
                  # num_samples: int,
                  seed: int,
                  sample_loader: dfa_utils.SampleLoader,
-                 # sample_id_savepath: Optional[str] = None
-                 ):
+                 iterate_all: bool = False):
         self.sample_id_list = sample_id_list
+        self.iterate_all = iterate_all
+        self.sample_id_list_iter = None
         self.seed = seed
         self.task_name = task_name
         self.sample_loader = sample_loader
         self.expected_hint_len = self.sample_loader.expected_hint_len
         self.max_num_pp = self.sample_loader.max_num_pp
         # self.sample_id_savepath = sample_id_savepath
-        self.num_sample_id_recorded = 0
+        # self.num_sample_id_recorded = 0
         # self.log_sample_id_str = ''
         # if sample_id_savepath is not None and os.path.isfile(sample_id_savepath):
         #     os.system(f'rm {sample_id_savepath}')
@@ -71,6 +72,9 @@ class DFASampler(samplers.Sampler):
                                   seed=seed,
                                   if_estimate_max_step=False)
 
+    def reset_sample_id_iter(self):
+        assert self.iterate_all
+        self.sample_id_list_iter = iter(self.sample_id_list)
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
         # sample_id = next(self.sample_id_generator)
         # rand_idx = self._rng.randint(0, len(self.sample_id_list) - 1)
@@ -78,6 +82,9 @@ class DFASampler(samplers.Sampler):
         # print(f'dfa_sampler line 63, len of sample_id_list is {len(self.sample_id_list)}; rand_idx = {rand_idx}')
         # print(f'the type of the content in sample_id_list: {type(self.sample_id_list[0])}, and its len: {len(self.sample_id_list[0])}')
         # print(f'the type of sampled_id = {type(sampled_id)}; its len = {len(sampled_id)}')
+        if self.iterate_all:
+            # print(f'dfa_samplers line 86, len of sample_id_list = {len(self.sample_id_list)}')
+            return next(self.sample_id_list_iter)
         return self._rng.choice(self.sample_id_list)
 
     def _make_batch(self, num_samples: int,
@@ -111,7 +118,7 @@ class DFASampler(samplers.Sampler):
             #     sample_id = self._sample_data(*args, **kwargs)
             sample_id = self._sample_data(*args, **kwargs)
             print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
-            self.num_sample_id_recorded += 1
+            # self.num_sample_id_recorded += 1
             # self.log_sample_id_str += f'{sample_id}\n'
             # if self.num_sample_id_recorded % 500 == 0:
             #     with open(self.sample_id_savepath, 'a') as sample_id_logger:
