@@ -93,7 +93,7 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
                                                                                                          params_hash=trained_model_params_id))
     if iterate_entire_dataset:
         test_sampler.reset_sample_id_iter()
-    _, init_feedback = next(test_feedback_generator)
+    _, _, init_feedback = next(test_feedback_generator)
     dfa_baseline_model.init(features=init_feedback.features,
                             seed=test_info_dict['random_seed'] + 1)
     # ckpt_savedir = trained_model_params_dict['baseline_model']['checkpoint_path']
@@ -145,13 +145,13 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
         while True:
             if iterate_entire_dataset:
                 try:
-                    task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
+                    sampled_ids_this_batch, task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
                 except StopIteration:
                     break
             else:
                 if test_batch_idx == test_info_dict['num_steps_per_ckpt']:
                     break
-                task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
+                sampled_ids_this_batch, task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
         # while test_batch_idx < test_info_dict['num_steps_per_ckpt']:
         #     task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
             full_trace_len_this_batch = test_feedback_batch.features.mask_dict['full_trace_len']

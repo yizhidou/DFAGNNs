@@ -36,6 +36,8 @@ class DFAException(probing.ProbeError):
 
     ANALYZE_TIME_OUT = 8
 
+    TOO_FEW_PP_NODES = 9
+
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
         self.error_code = error_code
@@ -115,10 +117,11 @@ class SampleLoader:
         self.cfg_edges_rate = cfg_edges_rate
         self.for_get_statistics = for_get_statistics
         self.max_num_pp = max_num_pp
+        self.min_num_pp = min_num_pp
         # self.use_self_loops = use_self_loops
         self.trace_sample_from_start = trace_sample_from_start
         if self.for_get_statistics:
-            assert self.max_num_pp is None
+            assert self.max_num_pp is None and self.min_num_pp is None
         self.if_sync = if_sync
         if self.if_sync:
             self.max_iteration = 500
@@ -212,6 +215,9 @@ class SampleLoader:
         if self.max_num_pp is not None and num_pp > self.max_num_pp:
             self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_MANY_PP_NODES
             raise DFAException(DFAException.TOO_MANY_PP_NODES, sample_id)
+        if self.min_num_pp is not None and num_pp < self.min_num_pp:
+            self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.TOO_FEW_PP_NODES
+            raise DFAException(DFAException.TOO_FEW_PP_NODES, sample_id)
         num_ip = len(result_obj.interested_points.value)
         if not task_name == 'liveness':
             assert num_pp == num_ip
@@ -600,6 +606,7 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
     sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
                                  expected_trace_len=6,
                                  max_num_pp=None,
+                                 min_num_pp=None,
                                  cfg_edges_rate=1.5,
                                  selected_num_ip=5,
                                  for_get_statistics=True,
