@@ -146,7 +146,7 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
             if iterate_entire_dataset:
                 try:
                     sampled_ids_this_batch, task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
-                except StopIteration:
+                except RuntimeError:
                     break
             else:
                 if test_batch_idx == test_info_dict['num_steps_per_ckpt']:
