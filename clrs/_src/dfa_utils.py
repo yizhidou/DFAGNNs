@@ -40,7 +40,6 @@ class DFAException(probing.ProbeError):
 
     NUM_PP_DISAGREE = 10
 
-    NUM_CFG_DISAGREE  = 11
 
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
@@ -112,20 +111,20 @@ class SampleLoader:
                  trace_sample_from_start: bool,
                  dfa_version: Optional[int],
                  balance_sample_task: Optional[bool] = False,
-                 for_get_statistics: bool = False,
+                 # for_get_statistics: bool = False,
                  if_idx_reorganized: bool = True
                  ):
         self.sample_path_processor = sample_path_processor
         self.expected_trace_len = expected_trace_len
         self.expected_hint_len = self.expected_trace_len - 1
         self.cfg_edges_rate = cfg_edges_rate
-        self.for_get_statistics = for_get_statistics
+        # self.for_get_statistics = for_get_statistics
         self.max_num_pp = max_num_pp
         self.min_num_pp = min_num_pp
         # self.use_self_loops = use_self_loops
         self.trace_sample_from_start = trace_sample_from_start
-        if self.for_get_statistics:
-            assert self.max_num_pp is None and self.min_num_pp is None
+        # if self.for_get_statistics:
+        #     assert self.max_num_pp is None and self.min_num_pp is None
         self.if_sync = if_sync
         if self.if_sync:
             self.max_iteration = 500
@@ -280,7 +279,7 @@ class SampleLoader:
                 # print(trace_sparse)
                 trace_list.append(trace_sparse)
         # print(f'length of trace_list = {len(trace_list)}')
-        return trace_list, selected_ip_indices_base, num_pp
+        return trace_list, selected_ip_indices_base
 
     def _load_sparse_edge_from_str(self, task_name: Union[str, bytes],
                                    edges_str,
@@ -309,8 +308,8 @@ class SampleLoader:
                 # [num_pp, selected_num_ip ]
                 kill_vectors = kill_array_dense[selected_ip_indices_base, :].transpose()
                 # [num_pp, selected_num_ip, ]
-                return cfg_edges, [gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                                            if_forward=False, )]
+                return num_pp, cfg_edges, [gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
+                                                                                                if_forward=False, )]
                 # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
@@ -330,7 +329,7 @@ class SampleLoader:
                                               np.expand_dims(gen_kill_idx_target, -1),
                                               np.expand_dims(kill_content_sparse, -1)],
                                              axis=1)
-                return cfg_edges, [cfg_edges, gen_sparse, kill_sparse]
+                return num_pp, cfg_edges, [cfg_edges, gen_sparse, kill_sparse]
         else:
             assert task_name in ['dominance', 'reachability']
             edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
@@ -343,8 +342,8 @@ class SampleLoader:
                 # [num_pp, selected_num_ip]
                 kill_vectors = np.zeros((num_pp, self.selected_num_ip), dtype=int)
                 # [num_pp, selected_num_ip]
-                return cfg_edges, [gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
-                                                                                            if_forward=True if task_name == 'dominance' else False)]
+                return num_pp, cfg_edges, [gen_vectors, kill_vectors, _derive_bidirectional_cfg(cfg_indices=cfg_edges,
+                                                                                                if_forward=True if task_name == 'dominance' else False)]
                 # num_pp=num_pp if self.use_self_loops else None)
             else:
                 gen_content_sparse = gen_array_dense[selected_ip_indices_base, :].reshape(-1, )
@@ -357,7 +356,7 @@ class SampleLoader:
                                              np.expand_dims(gen_idx_target, -1),
                                              np.expand_dims(gen_content_sparse, -1)],
                                             axis=1)
-                return cfg_edges, [cfg_edges, gen_sparse]
+                return num_pp, cfg_edges, [cfg_edges, gen_sparse]
 
     def load_a_sample(self, task_name, sample_id):
         assert task_name in ['liveness', 'dominance', 'reachability']
@@ -396,14 +395,14 @@ class SampleLoader:
             trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
         else:
             trace_start_idx = 0
-        trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                          trace_bytes=trace_chunck,
-                                                                                          sample_id=sample_id,
-                                                                                          selected_num_ip=self.selected_num_ip,
-                                                                                          start_trace_idx=trace_start_idx)
-        _, array_list = self._load_sparse_edge_from_str(task_name=task_name,
-                                                                    edges_str=edge_chunck,
-                                                                    selected_ip_indices_base=selected_ip_indices_base)
+        trace_list, selected_ip_indices_base = self._load_sparse_trace_from_bytes(task_name=task_name,
+                                                                                  trace_bytes=trace_chunck,
+                                                                                  sample_id=sample_id,
+                                                                                  selected_num_ip=self.selected_num_ip,
+                                                                                  start_trace_idx=trace_start_idx)
+        num_pp, cfg_edges, array_list = self._load_sparse_edge_from_str(task_name=task_name,
+                                                                        edges_str=edge_chunck,
+                                                                        selected_ip_indices_base=selected_ip_indices_base)
         # if self.for_get_statistics:
         #     return num_pp, num_cfg_edges
         if self.dfa_version is not None:
@@ -413,6 +412,21 @@ class SampleLoader:
                                                selected_ip_indices_base=selected_ip_indices_base,
                                                num_pp=num_pp)
             return trace_list, array_list, if_pp, if_ip
+
+    def _num_pp_and_cfg(self, task_name: Union[str, bytes],
+                        edges_str):
+        edges_saved_matrix = np.fromstring(edges_str, sep=' ', dtype=int)
+        if task_name == 'liveness':
+            edges_saved_matrix = edges_saved_matrix.reshape((-1, 3))
+            num_pp, num_ip = edges_saved_matrix[0, 0], edges_saved_matrix[0, 1]
+            cfg_row_indices = np.where(edges_saved_matrix[:, -1] == 0)[0]
+            cfg_edges = edges_saved_matrix[cfg_row_indices, :-1]
+        else:
+            assert task_name in ['dominance', 'reachability']
+            edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
+            num_pp = edges_saved_matrix[0, 0]
+            cfg_edges = edges_saved_matrix[1:, :]
+        return num_pp, cfg_edges
 
     def get_statistics(self, task_name, sample_id):
         assert task_name in ['liveness', 'dominance', 'reachability']
@@ -451,15 +465,29 @@ class SampleLoader:
             trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
         else:
             trace_start_idx = 0
-        trace_list, selected_ip_indices_base, num_pp = self._load_sparse_trace_from_bytes(task_name=task_name,
-                                                                                          trace_bytes=trace_chunck,
-                                                                                          sample_id=sample_id,
-                                                                                          selected_num_ip=self.selected_num_ip,
-                                                                                          start_trace_idx=trace_start_idx)
-        cfg_edges, _ = self._load_sparse_edge_from_str(task_name=task_name,
-                                                                    edges_str=edge_chunck,
-                                                                    selected_ip_indices_base=selected_ip_indices_base)
-
+        # trace_list, selected_ip_indices_base, num_pp_from_trace = self._load_sparse_trace_from_bytes(
+        #     task_name=task_name,
+        #     trace_bytes=trace_chunck,
+        #     sample_id=sample_id,
+        #     selected_num_ip=self.selected_num_ip,
+        #     start_trace_idx=trace_start_idx)
+        num_pp, cfg_edges = self._num_pp_and_cfg(task_name=task_name,
+                                                 edges_str=edge_chunck)
+        # assert num_pp_from_trace == num_pp
+        num_cfg_edges = cfg_edges.shape[0]
+        # print('dfa_util line 464, num_pp_from_trace is redundant if the assertion passes!')
+        if task_name == 'liveness' or task_name == 'reachability':
+            cfg_edges = cfg_edges[:, [1, 0]]
+        else:
+            assert task_name == 'dominance'
+        cfg_ad_matrix = np.zeros((num_pp, num_pp), dtype=int)
+        cfg_ad_matrix[cfg_edges[:, 0], cfg_edges[:, 1]] = 1
+        out_degree_vector = np.sum(cfg_ad_matrix, axis=-1)
+        in_degree_vector = np.sum(cfg_ad_matrix, axis=0)
+        max_out_degree = np.max(out_degree_vector).item()
+        max_in_degree = np.max(in_degree_vector).item()
+        max_in_degree = np.max(in_degree_vector).item()
+        return num_pp, num_cfg_edges, max_out_degree, max_in_degree
 
     def draw_the_sample(self, sample_id):
         if sample_id in self.sample_path_processor.errored_sample_ids:
@@ -648,14 +676,6 @@ def parse_params(params_hash: str,
     return params_dict
 
 
-def analyze_node_edge_ratio(sourcegraph_dir: str,
-                            errorlog_savepath: str,
-                            sample_ids_savepath: str,
-                            ne_ratio_statistics_savepath: Optional[str],
-                            if_clear: bool):
-    pass
-
-
 def get_statistics_from_dataset(sourcegraph_dir: str,
                                 errorlog_savepath: str,
                                 sample_ids_savepath: str,
@@ -702,11 +722,11 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
             # num_pp = None
             try:
                 num_pp_liveness, num_cfg_liveness = sample_loader.load_a_sample(task_name='liveness',
-                                                              sample_id=sample_id)
+                                                                                sample_id=sample_id)
                 num_pp_reachability, num_cfg_reachability = sample_loader.load_a_sample(task_name='reachability',
-                                                                  sample_id=sample_id)
+                                                                                        sample_id=sample_id)
                 num_pp_dominance, num_cfg_dominance = sample_loader.load_a_sample(task_name='dominance',
-                                                               sample_id=sample_id)
+                                                                                  sample_id=sample_id)
                 try:
                     assert num_pp_liveness == num_pp_reachability and num_pp_liveness == num_pp_dominance
                 except AssertionError:
@@ -723,6 +743,106 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
     if statistics_log_savepath is not None:
         with open(num_pp_statistics_log_savepath, 'w') as statistics_logger:
             json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
+
+
+def new_get_statistics_from_dataset(sourcegraph_dir: str,
+                                    errorlog_savepath: str,
+                                    sample_ids_savepath: str,
+                                    num_pp_statistics_log_savepath: Optional[str],
+                                    full_statistics_log_savepath: Optional[str],
+                                    if_clear_num_pp_statistics: bool,
+                                    if_clear_full_statistics):
+    sample_path_processor = SamplePathProcessor(
+        sourcegraph_dir=sourcegraph_dir,
+        errorlog_savepath=errorlog_savepath)
+    sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
+                                 expected_trace_len=6,
+                                 max_num_pp=None,
+                                 min_num_pp=None,
+                                 cfg_edges_rate=1.5,
+                                 selected_num_ip=5,
+                                 # for_get_statistics=True,
+                                 dfa_version=0,
+                                 # use_self_loops=True,
+                                 if_sync=True,
+                                 trace_sample_from_start=True,
+                                 seed=6)
+    if num_pp_statistics_log_savepath is not None:
+        if if_clear_num_pp_statistics or (not os.path.isfile(num_pp_statistics_log_savepath)) or os.path.getsize(
+                num_pp_statistics_log_savepath) == 0:
+            num_pp_statistics_dict = {}
+        else:
+            with open(num_pp_statistics_log_savepath) as f:
+                num_pp_statistics_dict = json.load(f)
+    else:
+        num_pp_statistics_dict = {}
+    if full_statistics_log_savepath is not None:
+        if if_clear_full_statistics or (not os.path.isfile(full_statistics_log_savepath)) or os.path.getsize(
+                full_statistics_log_savepath) == 0:
+            full_statistics_dict = {}
+        else:
+            with open(full_statistics_log_savepath) as f:
+                full_statistics_dict = json.load(f)
+    else:
+        full_statistics_dict = {}
+    count = 0
+    with open(sample_ids_savepath) as f:
+        for line in f.readlines():
+            sample_id = line.strip()
+            if sample_id in sample_path_processor.errored_sample_ids or (
+                    sample_id in num_pp_statistics_dict and sample_id in full_statistics_dict):
+                print(f'{sample_id} has been processed, so skip!')
+                continue
+            count += 1
+            if count % 5000 == 0:
+                sample_path_processor.dump_errored_samples_to_log()
+                if num_pp_statistics_log_savepath is not None:
+                    with open(num_pp_statistics_log_savepath, 'w') as pp_statistics_logger:
+                        json.dump(num_pp_statistics_dict, pp_statistics_logger, indent=3)
+                if full_statistics_log_savepath is not None:
+                    with open(full_statistics_log_savepath, 'w') as full_statistics_logger:
+                        json.dump(full_statistics_dict, full_statistics_logger, indent=3)
+            print(f'{count}: {sample_id} id on processing...')
+            # num_pp = None
+            try:
+                num_pp_liveness, num_cfg_liveness, max_out_degree_liveness, max_in_degree_liveness = sample_loader.get_statistics(
+                    task_name='liveness',
+                    sample_id=sample_id)
+                num_pp_reachability, num_cfg_reachability, max_out_degree_reachability, max_in_degree_reachability = sample_loader.get_statistics(
+                    task_name='reachability',
+                    sample_id=sample_id)
+                num_pp_dominance, num_cfg_dominance, max_out_degree_dominance, max_in_degree_dominance = sample_loader.get_statistics(
+                    task_name='dominance',
+                    sample_id=sample_id)
+                try:
+                    assert num_pp_liveness == num_pp_reachability and num_pp_liveness == num_pp_dominance
+                except AssertionError:
+                    print('dfa_utils line 820, 3 num_pps disagree!')
+                    print(
+                        f'num_pp_liveness = {num_pp_liveness}; num_pp_reachability = {num_pp_reachability}; num_pp_dominance = {num_pp_dominance}')
+                    sample_path_processor.errored_sample_ids[sample_id] = DFAException.NUM_PP_DISAGREE
+                    raise DFAException(DFAException.NUM_PP_DISAGREE)
+                assert num_cfg_liveness == num_cfg_reachability and num_cfg_liveness == num_cfg_dominance
+                assert max_out_degree_liveness == max_out_degree_reachability and max_out_degree_liveness == max_out_degree_dominance
+                assert max_in_degree_liveness == max_in_degree_reachability and max_in_degree_liveness == max_in_degree_dominance
+                num_pp = num_pp_liveness.item()
+                num_pp_statistics_dict[sample_id] = num_pp
+                en_ratio = float(num_cfg_liveness) / float(num_pp)
+                full_statistics_dict[sample_id] = (
+                    num_pp, num_cfg_liveness, en_ratio, max_out_degree_liveness, max_in_degree_liveness)
+                print(
+                    f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; en_ratio = {en_ratio}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}')
+            except DFAException as e:
+                print(f'{sample_id} errored! error_code: {e.error_code}')
+                continue
+            # break
+    sample_path_processor.dump_errored_samples_to_log()
+    if num_pp_statistics_log_savepath is not None:
+        with open(num_pp_statistics_log_savepath, 'w') as pp_statistics_logger:
+            json.dump(num_pp_statistics_dict, pp_statistics_logger, indent=3)
+    if full_statistics_log_savepath is not None:
+        with open(full_statistics_log_savepath, 'w') as full_statistics_logger:
+            json.dump(full_statistics_dict, full_statistics_logger, indent=3)
 
 
 def compute_hash(file_path,
@@ -778,6 +898,9 @@ def rename_params_file(params_savedir,
 class UtilPathProcessor:
     AVAILABLE_DATASET_NAMES = ['poj104', 'tensorflow', 'linux', 'opencv', 'opencl', 'npd']
 
+    def dataset_sample_ids_savepath(self, dataset_name):
+        return f'/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/{dataset_name}/{dataset_name}_sample_ids.txt'
+
     def trained_model_params_savedir(self, dataset_name):
         # assert dataset_name in self.AVAILABLE_DATASET_NAMES
         return f'/data_hdd/lx20/yzd_workspace/Params/TrainParams/{dataset_name}_TrainParams'
@@ -805,9 +928,13 @@ class UtilPathProcessor:
         savedir = f'/data_hdd/lx20/yzd_workspace/Logs/TestLogs/{dataset_name}_TestLogs'
         return os.path.join(savedir, f'{trained_model_params_id}_trained', f'{test_info_hash}_test')
 
-    def statistics_filepath(self, dataset_name):
+    def num_pp_statistics_filepath(self, dataset_name):
         # assert dataset_name in self.AVAILABLE_DATASET_NAMES
-        return f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_Statistics/{dataset_name}_statistics.json'
+        return f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_Statistics/{dataset_name}_num_pp_statistics.json'
+
+    def full_statistics_filepath(self, dataset_name):
+        # assert dataset_name in self.AVAILABLE_DATASET_NAMES
+        return f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_Statistics/{dataset_name}_full_statistics.json'
 
 
 if __name__ == '__main__':
@@ -815,7 +942,8 @@ if __name__ == '__main__':
     # errorlog_savepath = '/Users/yizhidou/Documents/ProGraMLTestPlayground/TestOutputFiles/poj104_103/test_error_logs/test_error_log.txt'
     parser = argparse.ArgumentParser(description='Please input the params filename')
     parser.add_argument('--dataset_name', type=str, required=True)
-    parser.add_argument('--clear', action='store_true')
+    parser.add_argument('--clear_pp', action='store_true')
+    parser.add_argument('--clear_full', action='store_true')
     args = parser.parse_args()
     # print(f'dataset_name = {args.dataset_name}; type is: {type(args.dataset_name)}')
     # assert args.dataset_name == 'github'
@@ -823,11 +951,16 @@ if __name__ == '__main__':
     # dataset_name = sys.argv[1]
     sourcegraph_dir = '/data_hdd/lx20/yzd_workspace/Datasets/ProgramlDatasetUnzip/dataflow/graphs'
     errorlog_savepath = f'/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/{args.dataset_name}_errors_max500.txt'
-    sample_ids_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/{args.dataset_name}/{args.dataset_name}_sample_ids.txt'
-    statistics_log_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{args.dataset_name}_statistics.json'
+    # sample_ids_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/SampleIds/{args.dataset_name}/{args.dataset_name}_sample_ids.txt'
+    # statistics_log_savepath = f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{args.dataset_name}_statistics.json'
     util_path_processor = UtilPathProcessor()
-    get_statistics_from_dataset(sourcegraph_dir=sourcegraph_dir,
-                                errorlog_savepath=errorlog_savepath,
-                                sample_ids_savepath=sample_ids_savepath,
-                                statistics_log_savepath=util_path_processor.statistics_filepath(args.dataset_name),
-                                if_clear=args.clear)
+    new_get_statistics_from_dataset(sourcegraph_dir=sourcegraph_dir,
+                                    errorlog_savepath=errorlog_savepath,
+                                    sample_ids_savepath=util_path_processor.dataset_sample_ids_savepath(
+                                        args.dataset_name),
+                                    num_pp_statistics_log_savepath=util_path_processor.num_pp_statistics_filepath(
+                                        args.dataset_name),
+                                    full_statistics_log_savepath=util_path_processor.full_statistics_filepath(
+                                        args.dataset_name),
+                                    if_clear_num_pp_statistics=args.clear_pp,
+                                    if_clear_full_statistics=args.clear_full)
