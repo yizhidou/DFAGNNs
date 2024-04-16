@@ -86,6 +86,8 @@ class SamplePathProcessor:
         else:
             with open(self.errorlog_savepath) as errored_reader:
                 self.errored_sample_ids = json.load(errored_reader)
+                # print(f'dfa_util line 89, errorlog_savepath = {self.errorlog_savepath}; {len(self.errored_sample_ids)} in total')
+                # exit(666)
         # self.statistics_savepath = statistics_savepath
         # self.newly_recorded_satistice = {}
 
@@ -486,8 +488,7 @@ class SampleLoader:
         in_degree_vector = np.sum(cfg_ad_matrix, axis=0)
         max_out_degree = np.max(out_degree_vector).item()
         max_in_degree = np.max(in_degree_vector).item()
-        max_in_degree = np.max(in_degree_vector).item()
-        return num_pp, num_cfg_edges, max_out_degree, max_in_degree
+        return num_pp, num_cfg_edges, max_out_degree, max_in_degree, printed_trace_len
 
     def draw_the_sample(self, sample_id):
         if sample_id in self.sample_path_processor.errored_sample_ids:
@@ -713,7 +714,7 @@ def get_statistics_from_dataset(sourcegraph_dir: str,
                 print(f'{sample_id} has been processed, so skip!')
                 continue
             count += 1
-            if count % 5000 == 0:
+            if count % 500 == 0:
                 sample_path_processor.dump_errored_samples_to_log()
                 if num_pp_statistics_log_savepath is not None:
                     with open(statistics_log_savepath, 'w') as statistics_logger:
@@ -794,7 +795,7 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                 print(f'{sample_id} has been processed, so skip!')
                 continue
             count += 1
-            if count % 5000 == 0:
+            if count % 500 == 0:
                 sample_path_processor.dump_errored_samples_to_log()
                 if num_pp_statistics_log_savepath is not None:
                     with open(num_pp_statistics_log_savepath, 'w') as pp_statistics_logger:
@@ -805,13 +806,13 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
             print(f'{count}: {sample_id} id on processing...')
             # num_pp = None
             try:
-                num_pp_liveness, num_cfg_liveness, max_out_degree_liveness, max_in_degree_liveness = sample_loader.get_statistics(
+                num_pp_liveness, num_cfg_liveness, max_out_degree_liveness, max_in_degree_liveness, printed_trace_len_liveness = sample_loader.get_statistics(
                     task_name='liveness',
                     sample_id=sample_id)
-                num_pp_reachability, num_cfg_reachability, max_out_degree_reachability, max_in_degree_reachability = sample_loader.get_statistics(
+                num_pp_reachability, num_cfg_reachability, max_out_degree_reachability, max_in_degree_reachability, printed_trace_len_reachability = sample_loader.get_statistics(
                     task_name='reachability',
                     sample_id=sample_id)
-                num_pp_dominance, num_cfg_dominance, max_out_degree_dominance, max_in_degree_dominance = sample_loader.get_statistics(
+                num_pp_dominance, num_cfg_dominance, max_out_degree_dominance, max_in_degree_dominance, printed_trace_len_dominance = sample_loader.get_statistics(
                     task_name='dominance',
                     sample_id=sample_id)
                 try:
@@ -826,12 +827,15 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                 assert max_out_degree_liveness == max_out_degree_reachability and max_out_degree_liveness == max_out_degree_dominance
                 assert max_in_degree_liveness == max_in_degree_reachability and max_in_degree_liveness == max_in_degree_dominance
                 num_pp = num_pp_liveness.item()
+                num_cfg = num_cfg_liveness
+                max_out_degree = max_out_degree_liveness
+                max_in_degree = max_in_degree_liveness
                 num_pp_statistics_dict[sample_id] = num_pp
-                en_ratio = float(num_cfg_liveness) / float(num_pp)
+                # en_ratio = float(num_cfg) / float(num_pp)
                 full_statistics_dict[sample_id] = (
-                    num_pp, num_cfg_liveness, en_ratio, max_out_degree_liveness, max_in_degree_liveness)
+                    num_pp, num_cfg, max_out_degree, max_in_degree, printed_trace_len_liveness, printed_trace_len_reachability, printed_trace_len_dominance)
                 print(
-                    f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; en_ratio = {en_ratio}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}')
+                    f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}; tl_l = {printed_trace_len_liveness}; tl_r = {printed_trace_len_reachability}; rl_d = {printed_trace_len_dominance}')
             except DFAException as e:
                 print(f'{sample_id} errored! error_code: {e.error_code}')
                 continue
@@ -935,6 +939,9 @@ class UtilPathProcessor:
     def full_statistics_filepath(self, dataset_name):
         # assert dataset_name in self.AVAILABLE_DATASET_NAMES
         return f'/data_hdd/lx20/yzd_workspace/Datasets/Statistics/{dataset_name}_Statistics/{dataset_name}_full_statistics.json'
+
+    def errorlog_savepath(self, dataset_name):
+        return f'/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/{dataset_name}_errors_max500.txt'
 
 
 if __name__ == '__main__':

@@ -228,7 +228,7 @@ class DFASampler(samplers.Sampler):
             print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
             for task_idx, task_name_for_this_batch in enumerate(task_names_list):
                 try:
-                    print(f'{task_name_for_this_batch} is on going...')
+                    # print(f'dfa_sampler line 231, {task_name_for_this_batch} is on going...')
                     edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, task_name_for_this_batch)
                 except probing.ProbeError as err:
                     if isinstance(err, dfa_utils.DFAException):
