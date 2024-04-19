@@ -7,6 +7,8 @@ import hashlib
 import jax
 import jax.numpy as jnp
 import signal
+import networkx as nx
+import matplotlib.pyplot as plt
 from clrs._src import dfa_specs, probing
 
 _Array = np.ndarray
@@ -39,7 +41,6 @@ class DFAException(probing.ProbeError):
     TOO_FEW_PP_NODES = 9
 
     NUM_PP_DISAGREE = 10
-
 
     def __init__(self, error_code: int,
                  sample_id: Union[str, None] = None):
@@ -190,7 +191,7 @@ class SampleLoader:
         task_name_in_byte, _, edge_size = _parse_a_line(byte_str_edge_size)
         edge_chunck = cpp_out[end_idx_edge_size + 1: end_idx_edge_size + 1 + edge_size]
         trace_chunck = cpp_out[end_idx_edge_size + 1 + edge_size:]
-        return printed_num_iteration, edge_chunck, trace_chunck
+        return num_be, printed_num_iteration, edge_chunck, trace_chunck
 
     def _get_node_type(self, task_name: Union[str, bytes],
                        selected_ip_indices_base,
@@ -389,7 +390,7 @@ class SampleLoader:
                 print('cpp reports an error!')
                 self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_ERRORED_SAMPLE
                 raise DFAException(DFAException.ANALYZE_ERRORED_SAMPLE, sample_id)
-        printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
+        _, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
         # if self.sample_path_processor.statistics_savepath:
         #     self._merge_statistics(sample_id, sample_statistics)
         # print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
@@ -459,7 +460,7 @@ class SampleLoader:
                 print('cpp reports an error!')
                 self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_ERRORED_SAMPLE
                 raise DFAException(DFAException.ANALYZE_ERRORED_SAMPLE, sample_id)
-        printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
+        num_be, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
         # if self.sample_path_processor.statistics_savepath:
         #     self._merge_statistics(sample_id, sample_statistics)
         # print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
@@ -488,9 +489,10 @@ class SampleLoader:
         in_degree_vector = np.sum(cfg_ad_matrix, axis=0)
         max_out_degree = np.max(out_degree_vector).item()
         max_in_degree = np.max(in_degree_vector).item()
-        return num_pp, num_cfg_edges, max_out_degree, max_in_degree, printed_trace_len
+        return num_pp, num_cfg_edges, num_be, max_out_degree, max_in_degree, printed_trace_len
 
-    def draw_the_sample(self, sample_id):
+    def visualize_the_sample(self, sample_id,
+                             savepath: Optional[str] = None):
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise DFAException(DFAException.RECORDED_ERRORED_SAMPLE, sample_id)
         signal.signal(signal.SIGALRM, timeout_handler)
@@ -518,11 +520,17 @@ class SampleLoader:
                 print('cpp reports an error!')
                 self.sample_path_processor.errored_sample_ids[sample_id] = DFAException.ANALYZE_ERRORED_SAMPLE
                 raise DFAException(DFAException.ANALYZE_ERRORED_SAMPLE, sample_id)
-        printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
+        _, printed_trace_len, edge_chunck, trace_chunck = self._parse_cpp_stdout(cpp_out=cpp_out)
         edges_saved_matrix = np.fromstring(edge_chunck, sep=' ', dtype=int)
         edges_saved_matrix = edges_saved_matrix.reshape((-1, 2))
         num_pp = edges_saved_matrix[0, 0]
         cfg_edges = edges_saved_matrix[1:, :]
+        G = nx.Graph()
+        G.add_nodes_from(range(num_pp))
+        G.add_edges_from(cfg_edges)
+        nx.draw_networkx(G, arrows=True, arrowstyle='-|>', arrowsize=12)
+        if savepath is not None:
+            plt.savefig(fname=savepath, format='pdf')
 
 
 def _derive_bidirectional_cfg(cfg_indices,
@@ -673,77 +681,77 @@ def parse_params(params_hash: str,
         print('unrecognized version of GNN_kind!')
         raise DFAException(DFAException.UNRECOGNIZED_GNN_TYPE)
     params_dict['baseline_model']['version_of_DFANet'] = version_of_DFANet
-
+    assert params_dict['dfa_sampler']['batch_size'] == 1, 'Sorry but we only support batch_size = 1 by now'
     return params_dict
 
 
-def get_statistics_from_dataset(sourcegraph_dir: str,
-                                errorlog_savepath: str,
-                                sample_ids_savepath: str,
-                                num_pp_statistics_log_savepath: Optional[str],
-                                if_clear: bool):
-    sample_path_processor = SamplePathProcessor(
-        sourcegraph_dir=sourcegraph_dir,
-        errorlog_savepath=errorlog_savepath)
-    sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
-                                 expected_trace_len=6,
-                                 max_num_pp=None,
-                                 min_num_pp=None,
-                                 cfg_edges_rate=1.5,
-                                 selected_num_ip=5,
-                                 for_get_statistics=True,
-                                 dfa_version=0,
-                                 # use_self_loops=True,
-                                 if_sync=True,
-                                 trace_sample_from_start=True,
-                                 seed=6)
-    if num_pp_statistics_log_savepath is not None:
-        if if_clear or (not os.path.isfile(num_pp_statistics_log_savepath)) or os.path.getsize(
-                num_pp_statistics_log_savepath) == 0:
-            num_pp_statistics_dict = {}
-        else:
-            with open(statistics_log_savepath) as f:
-                num_pp_statistics_dict = json.load(f)
-    else:
-        num_pp_statistics_dict = {}
-    count = 0
-    with open(sample_ids_savepath) as f:
-        for line in f.readlines():
-            sample_id = line.strip()
-            if sample_id in num_pp_statistics_dict or sample_id in sample_path_processor.errored_sample_ids:
-                print(f'{sample_id} has been processed, so skip!')
-                continue
-            count += 1
-            if count % 500 == 0:
-                sample_path_processor.dump_errored_samples_to_log()
-                if num_pp_statistics_log_savepath is not None:
-                    with open(statistics_log_savepath, 'w') as statistics_logger:
-                        json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
-            print(f'{count}: {sample_id} id on processing...')
-            # num_pp = None
-            try:
-                num_pp_liveness, num_cfg_liveness = sample_loader.load_a_sample(task_name='liveness',
-                                                                                sample_id=sample_id)
-                num_pp_reachability, num_cfg_reachability = sample_loader.load_a_sample(task_name='reachability',
-                                                                                        sample_id=sample_id)
-                num_pp_dominance, num_cfg_dominance = sample_loader.load_a_sample(task_name='dominance',
-                                                                                  sample_id=sample_id)
-                try:
-                    assert num_pp_liveness == num_pp_reachability and num_pp_liveness == num_pp_dominance
-                except AssertionError:
-                    print('dfa_utils line 652, 3 num_pps disagree!')
-                    print(
-                        f'num_pp_liveness = {num_pp_liveness}; num_pp_reachability = {num_pp_reachability}; num_pp_dominance = {num_pp_dominance}')
-                    raise DFAException(DFAException.NUM_PP_DISAGREE)
-                num_pp_statistics_dict[sample_id] = num_pp_liveness
-                print(f'success! num_pp = {num_pp_liveness}')
-            except DFAException as e:
-                print(f'{sample_id} errored! error_code: {e.error_code}')
-                continue
-    sample_path_processor.dump_errored_samples_to_log()
-    if statistics_log_savepath is not None:
-        with open(num_pp_statistics_log_savepath, 'w') as statistics_logger:
-            json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
+# def get_statistics_from_dataset(sourcegraph_dir: str,
+#                                 errorlog_savepath: str,
+#                                 sample_ids_savepath: str,
+#                                 num_pp_statistics_log_savepath: Optional[str],
+#                                 if_clear: bool):
+#     sample_path_processor = SamplePathProcessor(
+#         sourcegraph_dir=sourcegraph_dir,
+#         errorlog_savepath=errorlog_savepath)
+#     sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
+#                                  expected_trace_len=6,
+#                                  max_num_pp=None,
+#                                  min_num_pp=None,
+#                                  cfg_edges_rate=1.5,
+#                                  selected_num_ip=5,
+#                                  for_get_statistics=True,
+#                                  dfa_version=0,
+#                                  # use_self_loops=True,
+#                                  if_sync=True,
+#                                  trace_sample_from_start=True,
+#                                  seed=6)
+#     if num_pp_statistics_log_savepath is not None:
+#         if if_clear or (not os.path.isfile(num_pp_statistics_log_savepath)) or os.path.getsize(
+#                 num_pp_statistics_log_savepath) == 0:
+#             num_pp_statistics_dict = {}
+#         else:
+#             with open(statistics_log_savepath) as f:
+#                 num_pp_statistics_dict = json.load(f)
+#     else:
+#         num_pp_statistics_dict = {}
+#     count = 0
+#     with open(sample_ids_savepath) as f:
+#         for line in f.readlines():
+#             sample_id = line.strip()
+#             if sample_id in num_pp_statistics_dict or sample_id in sample_path_processor.errored_sample_ids:
+#                 print(f'{sample_id} has been processed, so skip!')
+#                 continue
+#             count += 1
+#             if count % 500 == 0:
+#                 sample_path_processor.dump_errored_samples_to_log()
+#                 if num_pp_statistics_log_savepath is not None:
+#                     with open(statistics_log_savepath, 'w') as statistics_logger:
+#                         json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
+#             print(f'{count}: {sample_id} id on processing...')
+#             # num_pp = None
+#             try:
+#                 num_pp_liveness, num_cfg_liveness = sample_loader.load_a_sample(task_name='liveness',
+#                                                                                 sample_id=sample_id)
+#                 num_pp_reachability, num_cfg_reachability = sample_loader.load_a_sample(task_name='reachability',
+#                                                                                         sample_id=sample_id)
+#                 num_pp_dominance, num_cfg_dominance = sample_loader.load_a_sample(task_name='dominance',
+#                                                                                   sample_id=sample_id)
+#                 try:
+#                     assert num_pp_liveness == num_pp_reachability and num_pp_liveness == num_pp_dominance
+#                 except AssertionError:
+#                     print('dfa_utils line 652, 3 num_pps disagree!')
+#                     print(
+#                         f'num_pp_liveness = {num_pp_liveness}; num_pp_reachability = {num_pp_reachability}; num_pp_dominance = {num_pp_dominance}')
+#                     raise DFAException(DFAException.NUM_PP_DISAGREE)
+#                 num_pp_statistics_dict[sample_id] = num_pp_liveness
+#                 print(f'success! num_pp = {num_pp_liveness}')
+#             except DFAException as e:
+#                 print(f'{sample_id} errored! error_code: {e.error_code}')
+#                 continue
+#     sample_path_processor.dump_errored_samples_to_log()
+#     if statistics_log_savepath is not None:
+#         with open(num_pp_statistics_log_savepath, 'w') as statistics_logger:
+#             json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
 
 
 def new_get_statistics_from_dataset(sourcegraph_dir: str,
@@ -806,13 +814,13 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
             print(f'{count}: {sample_id} id on processing...')
             # num_pp = None
             try:
-                num_pp_liveness, num_cfg_liveness, max_out_degree_liveness, max_in_degree_liveness, printed_trace_len_liveness = sample_loader.get_statistics(
+                num_pp_liveness, num_cfg_liveness, num_be_liveness, max_out_degree_liveness, max_in_degree_liveness, printed_trace_len_liveness = sample_loader.get_statistics(
                     task_name='liveness',
                     sample_id=sample_id)
-                num_pp_reachability, num_cfg_reachability, max_out_degree_reachability, max_in_degree_reachability, printed_trace_len_reachability = sample_loader.get_statistics(
+                num_pp_reachability, num_cfg_reachability, num_be_reachability, max_out_degree_reachability, max_in_degree_reachability, printed_trace_len_reachability = sample_loader.get_statistics(
                     task_name='reachability',
                     sample_id=sample_id)
-                num_pp_dominance, num_cfg_dominance, max_out_degree_dominance, max_in_degree_dominance, printed_trace_len_dominance = sample_loader.get_statistics(
+                num_pp_dominance, num_cfg_dominance, num_be_dominance, max_out_degree_dominance, max_in_degree_dominance, printed_trace_len_dominance = sample_loader.get_statistics(
                     task_name='dominance',
                     sample_id=sample_id)
                 try:
@@ -826,6 +834,9 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                 assert num_cfg_liveness == num_cfg_reachability and num_cfg_liveness == num_cfg_dominance
                 assert max_out_degree_liveness == max_out_degree_reachability and max_out_degree_liveness == max_out_degree_dominance
                 assert max_in_degree_liveness == max_in_degree_reachability and max_in_degree_liveness == max_in_degree_dominance
+                # assert num_be_liveness == num_be_reachability, f'num_be_l = {num_be_liveness}; num_be_r = {num_be_reachability}'
+                # num_be_backeard = num_be_liveness
+                # num_be_forward = num_be_dominance
                 num_pp = num_pp_liveness.item()
                 num_cfg = num_cfg_liveness
                 max_out_degree = max_out_degree_liveness
@@ -833,9 +844,10 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                 num_pp_statistics_dict[sample_id] = num_pp
                 # en_ratio = float(num_cfg) / float(num_pp)
                 full_statistics_dict[sample_id] = (
-                    num_pp, num_cfg, max_out_degree, max_in_degree, printed_trace_len_liveness, printed_trace_len_reachability, printed_trace_len_dominance)
+                    num_pp, num_cfg, num_be_liveness, num_be_reachability, num_be_dominance, max_out_degree, max_in_degree, printed_trace_len_liveness,
+                    printed_trace_len_reachability, printed_trace_len_dominance)
                 print(
-                    f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}; tl_l = {printed_trace_len_liveness}; tl_r = {printed_trace_len_reachability}; rl_d = {printed_trace_len_dominance}')
+                    f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; num_be_l = {num_be_liveness}; num_be_r = {num_be_reachability}; num_be_d = {num_be_dominance}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}; tl_l = {printed_trace_len_liveness}; tl_r = {printed_trace_len_reachability}; tl_d = {printed_trace_len_dominance}')
             except DFAException as e:
                 print(f'{sample_id} errored! error_code: {e.error_code}')
                 continue
@@ -942,6 +954,12 @@ class UtilPathProcessor:
 
     def errorlog_savepath(self, dataset_name):
         return f'/data_hdd/lx20/yzd_workspace/Logs/ErrorLogs/{dataset_name}_errors_max500.txt'
+
+    def case_analysis_savepath(self, dataset_name, test_info_id, ckpt_idx):
+        # corner_case = f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.corner'
+        # normal_case = f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.normal'
+        return f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.analysis.json'
+
 
 
 if __name__ == '__main__':
