@@ -1,3 +1,5 @@
+import json
+
 import jax
 import argparse
 # import hashlib
@@ -7,26 +9,96 @@ from clrs._src import dfa_samplers
 from clrs._src import dfa_utils
 from clrs._src import dfa_processors
 from clrs._src import dfa_baselines
+from clrs._src import dfa_train
 
 
-def train(params_savedir, params_filename,
-          statistics_filepath, if_clear, if_log):
-    params_hash, params_savepath = dfa_utils.rename_params_file(params_savedir, params_filename,
-                                                                if_test_params=False)
+def rename_vali_params_file(params_savedir,
+                            params_filename):
+    cur_params_filepath = os.path.join(params_savedir, params_filename)
+    params_hash = dfa_utils.compute_hash(file_path=cur_params_filepath)
+    with open(os.path.join(params_savedir, params_filename)) as vali_params_loader:
+        train_params_id = json.load(vali_params_loader)['trained_model_info']['train_params_id']
+    new_params_filename = f'{train_params_id}.{params_hash}.vali'
+    tmp_list = params_filename.split('.')
+    if len(tmp_list) == 3:
+        assert params_filename == new_params_filename
+        return params_hash, cur_params_filepath
+    new_params_filepath = os.path.join(params_savedir, new_params_filename)
+    os.system(f'mv {cur_params_filepath} {new_params_filepath}')
+    if not os.path.isfile(new_params_filepath):
+        print('where is the renamed params file???')
+        exit(1)
+    return params_hash, new_params_filepath
+
+
+def validate(vali_params_savedir: str,
+             vali_params_filename: str,
+             params_savedir,
+             params_filename,
+             statistics_filepath,
+             if_clear,
+             if_log):
+    vali_params_id, vali_params_savepath = rename_vali_params_file(
+        params_savedir=vali_params_savedir,
+        params_filename=vali_params_filename)
+    with open(vali_params_savepath) as vali_params_loader:
+        vali_params_dict = json.load(vali_params_loader)
+    assert vali_params_dict['dfa_sampler']['batch_size'] == 1, 'Sorry but we only support batch_size = 1 by now'
+    train_params_id = vali_params_dict['trained_model_info']['train_params_id']
+    print(f'We are testing with {vali_params_id}... \n(the trained model is: {train_params_id})')
+    train_params_savedir = vali_params_dict['trained_model_info']['train_params_savedir']
+    train_params_savepath = os.path.join(train_params_savedir, f'{train_params_id}.train')
+    train_params_dict = dfa_train.parse_train_params(params_hash=train_params_id,
+                                                     params_filepath=train_params_savepath,
+                                                     statistics_filepath=statistics_filepath)
+    sample_path_processor = dfa_utils.SamplePathProcessor(
+        sourcegraph_dir=vali_params_dict['sample_path_processor']['sourcegraph_dir'],
+        errorlog_savepath=vali_params_dict['sample_path_processor']['errorlog_savepath'])
+    rng = np.random.RandomState(seed=vali_params_dict['random_seed'])
+    vali_params_dict['test_sample_loader']['dfa_version'] = train_params_dict['train_sample_loader']['dfa_version']
+    vali_sample_loader = dfa_utils.SampleLoader(sample_path_processor=sample_path_processor,
+                                                seed=rng.randint(2 ** 32),
+                                                **vali_params_dict['vali_sample_loader'])
+    filtered_vali_sample_ids = dfa_utils.filter_sample_list(
+        statistics_savepath=vali_params_dict['vali_filepath']['vali_sample_id_savepath'],
+        errored_sample_ids=sample_path_processor.errored_sample_ids,
+        max_num_pp=vali_params_dict['vali_sample_loader']['max_num_pp'],
+        min_num_pp=vali_params_dict['vali_sample_loader']['min_num_pp'],
+        sample_id_savepath=vali_params_dict['vali_filepath']['statistics_savepath'])
+    iterate_entire_dataset = True if vali_params_dict['num_steps_per_ckpt'] < 0 else False
+    vali_sampler = dfa_samplers.DFASampler(task_name=train_params_dict['task']['task_name'],
+                                           sample_id_list=filtered_vali_sample_ids,
+                                           seed=rng.randint(2 ** 32),
+                                           sample_loader=vali_sample_loader,
+                                           iterate_all=iterate_entire_dataset)
+
+    vali_feedback_generator = dfa_samplers.FeedbackGenerator_all_tasks(dfa_sampler=vali_sampler,
+                                                                       batch_size=vali_params_dict['dfa_sampler']['batch_size'])
+
+
+    # ========================================================
+    params_hash, params_savepath = dfa_utils.rename_params_file(params_savedir,
+                                                                params_filename,
+                                                                train_or_vali_or_test='vali')
     print(f'We are dealing with {params_hash}...')
     params_dict = dfa_utils.parse_params(params_hash=params_hash,
                                          params_filepath=params_savepath,
                                          statistics_filepath=statistics_filepath,
                                          for_model_test=False)
     log_savepath = os.path.join(params_dict['log']['log_savedir'], f'{params_hash}.log')
-    train_used_sample_ids_log_savepaht = os.path.join(params_dict['log']['used_sample_ids_savedir'], f'{params_hash}.used_samples')
-    train_used_sample_ids = dict()
+    train_used_sample_ids_log_savepath = os.path.join(params_dict['log']['used_sample_ids_savedir'],
+                                                      f'{params_hash}.used_samples')
     if os.path.isfile(log_savepath) and if_clear and if_log:
         os.system(f'rm {log_savepath}')
         print('old log has been removed!')
     if os.path.isfile(log_savepath) and not if_clear and if_log:
         print('Previous log exist! Please specify if clear the previous log or not!')
-        exit(58)
+        exit(28)
+    if os.path.isfile(train_used_sample_ids_log_savepath) and if_clear and if_log:
+        os.system(f'rm {train_used_sample_ids_log_savepath}')
+    if os.path.isfile(train_used_sample_ids_log_savepath) and not if_clear and if_log:
+        print('Previous train_used_sample_ids log exist! Please specify if clear the previous log or not!')
+        exit(33)
 
     sample_path_processor = dfa_utils.SamplePathProcessor(**params_dict['sample_path_processor'])
     rng = np.random.RandomState(seed=params_dict['task']['seed'])
@@ -64,7 +136,7 @@ def train(params_savedir, params_filename,
                                                         # version_of_DFANet=version_of_DFANet,
                                                         **params_dict['dfa_net'],
                                                         **params_dict['baseline_model'])
-    _, init_feedback = next(train_feedback_generator)
+    _, _, init_feedback = next(train_feedback_generator)
     dfa_baseline_model.init(features=init_feedback.features,
                             seed=params_dict['task']['seed'] + 1)
     # print('dfa_train line 116 dfa_baseline_model init done!')
@@ -92,7 +164,8 @@ def train(params_savedir, params_filename,
         while True:
             if iterate_entire_vali_set:
                 try:
-                    sampled_ids_this_batch, task_name_for_this_batch, vali_feedback_batch = next(vali_feedback_generator)
+                    sampled_ids_this_batch, task_name_for_this_batch, vali_feedback_batch = next(
+                        vali_feedback_generator)
                 except RuntimeError:  # Stop
                     break
             else:
@@ -106,10 +179,10 @@ def train(params_savedir, params_filename,
                 log_str += new_log_str
                 vali_sampled_id_remain = cur_vali_sampled_id
                 vali_batch_idx += 1
-        # while vali_batch_idx < vali_step_per_epoch:
-        #     task_name_for_this_batch, vali_feedback_batch = next(vali_feedback_generator)
+            # while vali_batch_idx < vali_step_per_epoch:
+            #     task_name_for_this_batch, vali_feedback_batch = next(vali_feedback_generator)
             new_rng_key, rng_key = jax.random.split(rng_key)
-            vali_precision, vali_recall, vali_f1, _, _ = dfa_baseline_model.get_measures(
+            vali_precision, vali_recall, vali_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=vali_feedback_batch)
             # new_log_str = f'vali epoch_{epoch_idx}_batch_{int(vali_batch_idx)} ({task_name_for_this_batch}): precision = {vali_precision}; recall = {vali_recall}; F1 = {vali_f1}\n'
@@ -134,7 +207,7 @@ def train(params_savedir, params_filename,
             else:
                 print('dfa_train line 150, unrecognized task_name!!')
                 assert False
-        liveness_log_str = f'vali epoch_{epoch_idx}: {int(num_vali_batch_liveness)} liveness batches; p = {(liveness_vali_precision_accum / num_vali_batch_liveness):.4f}; r = {(liveness_vali_recall_accum / num_vali_batch_liveness):.4f}; F1 = {(liveness_vali_f1_accum / num_vali_batch_liveness):.4f}\n'
+        liveness_log_str = f'\n vali epoch_{epoch_idx}: {int(num_vali_batch_liveness)} liveness batches; p = {(liveness_vali_precision_accum / num_vali_batch_liveness):.4f}; r = {(liveness_vali_recall_accum / num_vali_batch_liveness):.4f}; F1 = {(liveness_vali_f1_accum / num_vali_batch_liveness):.4f}\n'
         dominance_log_str = f'vali epoch_{epoch_idx}: {int(num_vali_batch_dominance)} dominance batches; p = {(dominance_vali_precision_accum / num_vali_batch_dominance):.4f}; r = {(dominance_vali_recall_accum / num_vali_batch_dominance):.4f}; F1 = {(dominance_vali_f1_accum / num_vali_batch_dominance):.4f}\n'
         reachability_log_str = f'vali epoch_{epoch_idx}: {int(num_vali_batch_reachability)} reachability batches; p = {(reachability_vali_precision_accum / num_vali_batch_reachability):.4f}; r = {(reachability_vali_recall_accum / num_vali_batch_reachability):.4f}; F1 = {(reachability_vali_f1_accum / num_vali_batch_reachability):.4f}\n'
         new_log_str = liveness_log_str + reachability_log_str + dominance_log_str
@@ -157,10 +230,12 @@ def train(params_savedir, params_filename,
         num_train_batch_liveness, liveness_train_loss_accum, liveness_train_precision_accum, liveness_train_recall_accum, liveness_train_f1_accum = 0.0, 0.0, 0.0, 0.0, 0.0
         num_train_batch_dominance, dominance_train_loss_accum, dominance_train_precision_accum, dominance_train_recall_accum, dominance_train_f1_accum = 0.0, 0.0, 0.0, 0.0, 0.0
         num_train_batch_reachability, reachability_train_loss_accum, reachability_train_precision_accum, reachability_train_recall_accum, reachability_train_f1_accum = 0.0, 0.0, 0.0, 0.0, 0.0
+        train_used_sample_ids = []
         while True:
             if iterate_entire_train_set:
                 try:
-                    sampled_ids_this_batch, task_name_for_this_batch, train_feedback_batch = next(train_feedback_generator)
+                    sampled_ids_this_batch, task_name_for_this_batch, train_feedback_batch = next(
+                        train_feedback_generator)
                 except RuntimeError:  # Stop
                     break
             else:
@@ -169,14 +244,14 @@ def train(params_savedir, params_filename,
                 sampled_ids_this_batch, task_name_for_this_batch, train_feedback_batch = next(train_feedback_generator)
             cur_train_sampled_id = sampled_ids_this_batch[0]
             if not cur_train_sampled_id == train_sampled_id_remain:
-                new_log_str = f'train epoch_{epoch_idx}_batch_{int(train_batch_idx)} {cur_train_sampled_id}: '
+                new_log_str = f'\ntrain epoch_{epoch_idx}_batch_{int(train_batch_idx)} {cur_train_sampled_id}: '
                 print(new_log_str)
                 log_str += new_log_str
                 train_sampled_id_remain = cur_train_sampled_id
-                train_used_sample_ids[cur_train_sampled_id] = 1
+                train_used_sample_ids.append(cur_train_sampled_id)
                 train_batch_idx += 1
-        # while train_batch_idx < train_step_per_epoch:
-        #     task_name_for_this_batch, train_feedback_batch = next(train_feedback_generator)
+            # while train_batch_idx < train_step_per_epoch:
+            #     task_name_for_this_batch, train_feedback_batch = next(train_feedback_generator)
             new_rng_key, rng_key = jax.random.split(rng_key)
             batch_train_loss = dfa_baseline_model.feedback(rng_key=new_rng_key,
                                                            feedback=train_feedback_batch)
@@ -219,6 +294,10 @@ def train(params_savedir, params_filename,
         if if_log:
             with open(log_savepath, 'a') as log_recorder:
                 log_recorder.write(log_str)
+            with open(train_used_sample_ids_log_savepath, 'a') as used_sample_logger:
+                used_sample_logger.write('\n'.join(train_used_sample_ids))
+                used_sample_logger.write('\n')
+                del train_used_sample_ids
         del log_str
         log_str = ''
         epoch_idx += 1
@@ -226,6 +305,8 @@ def train(params_savedir, params_filename,
         if if_log:
             dfa_baseline_model.save_model(file_name=f'{params_hash}.epoch_{epoch_idx}')
             print('the model has been saved~')
+        if iterate_entire_train_set:
+            train_sampler.reset_sample_id_iter()
         # log errored sample ids
         sample_path_processor.dump_errored_samples_to_log()
 
@@ -239,8 +320,8 @@ if __name__ == "__main__":
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--unlog', action='store_true')
     args = parser.parse_args()
-    params_savedir = '/data_hdd/lx20/yzd_workspace/Params/TrainParamsPOJ104/'
-    statistics_filepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/POJ104Statistics/poj104_statistics.json'
+    params_savedir = '/data_hdd/lx20/yzd_workspace/Params/TrainParams/'
+    statistics_filepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/poj104_Statistics/poj104_num_pp_statistics.json'
     if not os.path.isfile(os.path.join(params_savedir, args.params)):
         print('the specified params does not exist!')
         exit(176)

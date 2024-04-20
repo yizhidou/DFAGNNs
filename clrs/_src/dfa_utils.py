@@ -584,6 +584,28 @@ def dim_expand_to(x, y):
     return x
 
 
+def filter_sample_list(statistics_savepath,
+                       errored_sample_ids,
+                       max_num_pp,
+                       min_num_pp,
+                       sample_id_savepath):
+    with open(statistics_savepath) as statistics_loader:
+        statistics_dict = json.load(statistics_loader)
+
+    sample_id_list = []
+    with open(sample_id_savepath) as sample_ids_loader:
+        for line in sample_ids_loader.readlines():
+            sample_id = line.strip()
+            if sample_id in statistics_dict:
+                if statistics_dict[sample_id] > max_num_pp or statistics_dict[sample_id] < min_num_pp:
+                    continue
+            else:
+                assert sample_id in errored_sample_ids
+                continue
+            sample_id_list.append(sample_id)
+    return sample_id_list
+
+
 def parse_params(params_hash: str,
                  params_filepath: str,
                  statistics_filepath: str,
@@ -685,75 +707,6 @@ def parse_params(params_hash: str,
     return params_dict
 
 
-# def get_statistics_from_dataset(sourcegraph_dir: str,
-#                                 errorlog_savepath: str,
-#                                 sample_ids_savepath: str,
-#                                 num_pp_statistics_log_savepath: Optional[str],
-#                                 if_clear: bool):
-#     sample_path_processor = SamplePathProcessor(
-#         sourcegraph_dir=sourcegraph_dir,
-#         errorlog_savepath=errorlog_savepath)
-#     sample_loader = SampleLoader(sample_path_processor=sample_path_processor,
-#                                  expected_trace_len=6,
-#                                  max_num_pp=None,
-#                                  min_num_pp=None,
-#                                  cfg_edges_rate=1.5,
-#                                  selected_num_ip=5,
-#                                  for_get_statistics=True,
-#                                  dfa_version=0,
-#                                  # use_self_loops=True,
-#                                  if_sync=True,
-#                                  trace_sample_from_start=True,
-#                                  seed=6)
-#     if num_pp_statistics_log_savepath is not None:
-#         if if_clear or (not os.path.isfile(num_pp_statistics_log_savepath)) or os.path.getsize(
-#                 num_pp_statistics_log_savepath) == 0:
-#             num_pp_statistics_dict = {}
-#         else:
-#             with open(statistics_log_savepath) as f:
-#                 num_pp_statistics_dict = json.load(f)
-#     else:
-#         num_pp_statistics_dict = {}
-#     count = 0
-#     with open(sample_ids_savepath) as f:
-#         for line in f.readlines():
-#             sample_id = line.strip()
-#             if sample_id in num_pp_statistics_dict or sample_id in sample_path_processor.errored_sample_ids:
-#                 print(f'{sample_id} has been processed, so skip!')
-#                 continue
-#             count += 1
-#             if count % 500 == 0:
-#                 sample_path_processor.dump_errored_samples_to_log()
-#                 if num_pp_statistics_log_savepath is not None:
-#                     with open(statistics_log_savepath, 'w') as statistics_logger:
-#                         json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
-#             print(f'{count}: {sample_id} id on processing...')
-#             # num_pp = None
-#             try:
-#                 num_pp_liveness, num_cfg_liveness = sample_loader.load_a_sample(task_name='liveness',
-#                                                                                 sample_id=sample_id)
-#                 num_pp_reachability, num_cfg_reachability = sample_loader.load_a_sample(task_name='reachability',
-#                                                                                         sample_id=sample_id)
-#                 num_pp_dominance, num_cfg_dominance = sample_loader.load_a_sample(task_name='dominance',
-#                                                                                   sample_id=sample_id)
-#                 try:
-#                     assert num_pp_liveness == num_pp_reachability and num_pp_liveness == num_pp_dominance
-#                 except AssertionError:
-#                     print('dfa_utils line 652, 3 num_pps disagree!')
-#                     print(
-#                         f'num_pp_liveness = {num_pp_liveness}; num_pp_reachability = {num_pp_reachability}; num_pp_dominance = {num_pp_dominance}')
-#                     raise DFAException(DFAException.NUM_PP_DISAGREE)
-#                 num_pp_statistics_dict[sample_id] = num_pp_liveness
-#                 print(f'success! num_pp = {num_pp_liveness}')
-#             except DFAException as e:
-#                 print(f'{sample_id} errored! error_code: {e.error_code}')
-#                 continue
-#     sample_path_processor.dump_errored_samples_to_log()
-#     if statistics_log_savepath is not None:
-#         with open(num_pp_statistics_log_savepath, 'w') as statistics_logger:
-#             json.dump(num_pp_statistics_dict, statistics_logger, indent=3)
-
-
 def new_get_statistics_from_dataset(sourcegraph_dir: str,
                                     errorlog_savepath: str,
                                     sample_ids_savepath: str,
@@ -844,7 +797,8 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                 num_pp_statistics_dict[sample_id] = num_pp
                 # en_ratio = float(num_cfg) / float(num_pp)
                 full_statistics_dict[sample_id] = (
-                    num_pp, num_cfg, num_be_liveness, num_be_reachability, num_be_dominance, max_out_degree, max_in_degree, printed_trace_len_liveness,
+                    num_pp, num_cfg, num_be_liveness, num_be_reachability, num_be_dominance, max_out_degree,
+                    max_in_degree, printed_trace_len_liveness,
                     printed_trace_len_reachability, printed_trace_len_dominance)
                 print(
                     f'success! num_pp = {num_pp_liveness}; num_cfg = {num_cfg_liveness}; num_be_l = {num_be_liveness}; num_be_r = {num_be_reachability}; num_be_d = {num_be_dominance}; max_out = {max_out_degree_liveness}; max_in = {max_in_degree_liveness}; tl_l = {printed_trace_len_liveness}; tl_r = {printed_trace_len_reachability}; tl_d = {printed_trace_len_dominance}')
@@ -862,14 +816,15 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
 
 
 def compute_hash(file_path,
-                 if_for_test: bool):
-    if if_for_test:
-        skip_item_list = [b'   "num_steps_per_ckpt"']
-    else:
-        skip_item_list = [b'      "nb_epochs":',
-                          b'      "num_samples_train_set"',
-                          b'      "num_samples_test_set"',
-                          b'      "num_samples_vali_set"']
+                 # if_for_test: bool
+                 ):
+    # if if_for_test:
+    #     skip_item_list = [b'   "num_steps_per_ckpt"']
+    # else:
+    #     skip_item_list = [b'      "nb_epochs":',
+    #                       b'      "num_samples_train_set"',
+    #                       b'      "num_samples_test_set"',
+    #                       b'      "num_samples_vali_set"']
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
         # Read and update hash in chunks of 4K
@@ -884,31 +839,38 @@ def compute_hash(file_path,
     return sha256_hash.hexdigest()
 
 
-def rename_params_file(params_savedir,
-                       params_filename,
-                       if_test_params):
-    cur_params_filepath = os.path.join(params_savedir, params_filename)
-    params_hash = compute_hash(file_path=cur_params_filepath,
-                               if_for_test=if_test_params)
-    params_filename_prefix = params_filename.split('.')[0]
-    if params_filename_prefix == params_hash:
-        if if_test_params:
-            assert params_filename == f'{params_hash}.test_info'
-        else:
-            assert params_filename == f'{params_hash}.params'
-        return params_hash, cur_params_filepath
-    if if_test_params:
-        new_params_filename = f'{params_hash}.test_info'
-    else:
-        new_params_filename = f'{params_hash}.params'
-    new_params_filepath = os.path.join(params_savedir, new_params_filename)
-    os.system(f'mv {cur_params_filepath} {new_params_filepath}')
-    # print(f'dfa_train line 39 new_params_filepath = {new_params_filepath}')
-    # exit(40)
-    if not os.path.isfile(new_params_filepath):
-        print('where is the renamed params file???')
-        exit(1)
-    return params_hash, new_params_filepath
+# def rename_params_file(params_savedir,
+#                        params_filename,
+#                        train_or_vali_or_test):
+#     assert train_or_vali_or_test in ['train', 'vali', 'test']
+#     cur_params_filepath = os.path.join(params_savedir, params_filename)
+#     params_hash = compute_hash(file_path=cur_params_filepath)
+#
+#     # params_filename_prefix = params_filename.split('.')[0]
+#     # if params_filename_prefix == params_hash:
+#     tmp_list = params_filename.split('.')
+#     if params_hash in tmp_list:
+#         if train_or_vali_or_test == 'train':
+#             assert params_filename == f'{params_hash}.train'
+#         elif train_or_vali_or_test == 'vali':
+#             assert params_filename == f'{params_hash}.vali'
+#         else:
+#             assert params_filename == f'{params_hash}.test'
+#         return params_hash, cur_params_filepath
+#     if train_or_vali_or_test == 'train':
+#         new_params_filename = f'{params_hash}.train'
+#     elif train_or_vali_or_test == 'vali':
+#         new_params_filename = f'{params_hash}.vali'
+#     else:
+#         new_params_filename = f'{params_hash}.test'
+#     new_params_filepath = os.path.join(params_savedir, new_params_filename)
+#     os.system(f'mv {cur_params_filepath} {new_params_filepath}')
+#     # print(f'dfa_train line 39 new_params_filepath = {new_params_filepath}')
+#     # exit(40)
+#     if not os.path.isfile(new_params_filepath):
+#         print('where is the renamed params file???')
+#         exit(1)
+#     return params_hash, new_params_filepath
 
 
 class UtilPathProcessor:
@@ -959,7 +921,6 @@ class UtilPathProcessor:
         # corner_case = f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.corner'
         # normal_case = f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.normal'
         return f'/data_hdd/lx20/yzd_workspace/CaseAnalysis/{dataset_name}_CaseAnalysis/{test_info_id}_case_analysis/{test_info_id}_ckpt{ckpt_idx}.analysis.json'
-
 
 
 if __name__ == '__main__':

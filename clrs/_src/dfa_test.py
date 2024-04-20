@@ -1,49 +1,42 @@
 import os.path
-import pickle, json
+import json
 import argparse
 import numpy as np
-from typing import Optional, List
-from clrs._src import dfa_utils, dfa_samplers, dfa_processors, dfa_baselines
+from typing import List
+from clrs._src import dfa_train, dfa_utils
+from clrs._src import dfa_samplers, dfa_processors, dfa_baselines
 
 import haiku as hk
 import jax
 
 
-def filter_sample_list(statistics_savepath,
-                       errored_sample_ids,
-                       max_num_pp,
-                       min_num_pp,
-                       sample_id_savepath):
-    with open(statistics_savepath) as statistics_loader:
-        statistics_dict = json.load(statistics_loader)
-
-    sample_id_list = []
-    with open(sample_id_savepath) as sample_ids_loader:
-        for line in sample_ids_loader.readlines():
-            sample_id = line.strip()
-            if sample_id in statistics_dict:
-                if statistics_dict[sample_id] > max_num_pp or statistics_dict[sample_id] < min_num_pp:
-                    continue
-            else:
-                # print(f'def_test line 28, sample_id = {sample_id}')
-                assert sample_id in errored_sample_ids
-                # print(f'dfa_test line 29, {sample_id} is not in either statistics nor in errored_sample_ids, please check!')
-                continue
-            sample_id_list.append(sample_id)
-    return sample_id_list
+def rename_test_params_file(params_savedir,
+                            params_filename):
+    cur_params_filepath = os.path.join(params_savedir, params_filename)
+    params_hash = dfa_utils.compute_hash(file_path=cur_params_filepath)
+    with open(os.path.join(params_savedir, params_filename)) as test_params_loader:
+        train_params_id = json.load(test_params_loader)['trained_model_info']['train_params_id']
+    new_params_filename = f'{train_params_id}.{params_hash}.test'
+    tmp_list = params_filename.split('.')
+    if len(tmp_list) == 3:
+        assert params_filename == new_params_filename
+        return params_hash, cur_params_filepath
+    new_params_filepath = os.path.join(params_savedir, new_params_filename)
+    os.system(f'mv {cur_params_filepath} {new_params_filepath}')
+    if not os.path.isfile(new_params_filepath):
+        print('where is the renamed params file???')
+        exit(1)
+    return params_hash, new_params_filepath
 
 
 def test(util_path_processer: dfa_utils.UtilPathProcessor,
          test_dataset_name: str,
-         # test_info_savedir: str,
          test_info_filename: str,
-         # full_statistics_filepath: str,
          ckpt_idx_list: List[int],
          if_clear, if_log, check_trace):
-    test_info_hash, test_info_savepath = dfa_utils.rename_params_file(
+    test_info_hash, test_info_savepath = rename_test_params_file(
         params_savedir=util_path_processer.test_info_savedir(dataset_name=test_dataset_name),
-        params_filename=test_info_filename,
-        if_test_params=True)
+        params_filename=test_info_filename)
     with open(test_info_savepath) as test_info_loader:
         test_info_dict = json.load(test_info_loader)
     # utils_path_processer = dfa_utils.UtilPathProcessor()
@@ -57,11 +50,10 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
         full_statistics_dict = json.load(full_statistics_loader)
     trained_model_params_savedir = util_path_processer.trained_model_params_savedir(dataset_name=trained_dataset_name)
     trained_model_params_savepath = os.path.join(trained_model_params_savedir, f'{trained_model_params_id}.params')
-    trained_model_params_dict = dfa_utils.parse_params(params_hash=trained_model_params_id,
-                                                       params_filepath=trained_model_params_savepath,
-                                                       statistics_filepath=util_path_processer.num_pp_statistics_filepath(
-                                                           dataset_name=trained_dataset_name),
-                                                       for_model_test=True)
+    trained_model_params_dict = dfa_train.parse_train_params(params_hash=trained_model_params_id,
+                                                             params_filepath=trained_model_params_savepath,
+                                                             statistics_filepath=util_path_processer.num_pp_statistics_filepath(
+                                                                 dataset_name=trained_dataset_name))
     sample_path_processor = dfa_utils.SamplePathProcessor(
         sourcegraph_dir=trained_model_params_dict['sample_path_processor']['sourcegraph_dir'],
         errorlog_savepath=util_path_processer.errorlog_savepath(test_dataset_name))
@@ -71,12 +63,10 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
     test_sample_loader = dfa_utils.SampleLoader(sample_path_processor=sample_path_processor,
                                                 seed=rng.randint(2 ** 32),
                                                 **test_info_dict['test_sample_loader'])
-    if 'min_num_pp' not in test_info_dict['test_sample_loader']:
-        test_info_dict['test_sample_loader']['min_num_pp'] = 0
     iterate_entire_dataset = True if test_info_dict['num_steps_per_ckpt'] < 0 else False
     num_pp_statistics_filepath = util_path_processor.num_pp_statistics_filepath(dataset_name=test_dataset_name)
     test_sampler = dfa_samplers.DFASampler(task_name=trained_model_params_dict['task']['task_name'],
-                                           sample_id_list=filter_sample_list(
+                                           sample_id_list=dfa_utils.filter_sample_list(
                                                statistics_savepath=num_pp_statistics_filepath,
                                                errored_sample_ids=sample_path_processor.errored_sample_ids,
                                                max_num_pp=
@@ -88,7 +78,7 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
                                                # sample_id_savepath=test_info_dict['dfa_sampler']['test_sample_id_savepath']
                                                sample_id_savepath=util_path_processer.test_sample_ids_savepath(
                                                    dataset_name=test_dataset_name)
-                                               ),
+                                           ),
                                            seed=rng.randint(2 ** 32),
                                            sample_loader=test_sample_loader,
                                            iterate_all=iterate_entire_dataset)
@@ -156,14 +146,15 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
         num_test_batch_reachability, reachability_test_precision_accum, reachability_test_recall_accum, reachability_test_f1_accum = 0.0, 0.0, 0.0, 0.0
         # pos_num_accum, total_num_accum = 0.0, 0.0
         sampled_id_remain = ''
-        case_analysis_savepath = util_path_processer.case_analysis_savepath(dataset_name=test_dataset_name, test_info_id=test_info_hash,
-                                                           ckpt_idx=ckpt_idx)
+        case_analysis_savepath = util_path_processer.case_analysis_savepath(dataset_name=test_dataset_name,
+                                                                            test_info_id=test_info_hash,
+                                                                            ckpt_idx=ckpt_idx)
         case_analysis_dict = dict()
         while True:
             if iterate_entire_dataset:
                 try:
                     sampled_ids_this_batch, task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
-                except RuntimeError:    # Stop
+                except RuntimeError:  # Stop
                     break
             else:
                 if test_batch_idx == test_info_dict['num_steps_per_ckpt']:
