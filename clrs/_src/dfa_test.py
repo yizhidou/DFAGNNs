@@ -87,20 +87,19 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
                                                                            'batch_size'])
     processor_factory = dfa_processors.get_dfa_processor_factory(**trained_model_params_dict['processor'])
     del trained_model_params_dict['baseline_model']['checkpoint_path']
+    ckpt_savedir = util_path_processer.ckpt_savedir(dataset_name=trained_dataset_name,
+                                                    params_hash=trained_model_params_id)
     dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,
                                                         **trained_model_params_dict['dfa_net'],
                                                         **trained_model_params_dict['baseline_model'],
-                                                        checkpoint_path=util_path_processer.ckpt_savedir(
-                                                            dataset_name=trained_dataset_name,
-                                                            params_hash=trained_model_params_id))
+                                                        checkpoint_path=ckpt_savedir)
     if iterate_entire_dataset:
         test_sampler.reset_sample_id_iter()
     _, _, init_feedback = next(test_feedback_generator)
     dfa_baseline_model.init(features=init_feedback.features,
                             seed=test_info_dict['random_seed'] + 1)
     # ckpt_savedir = trained_model_params_dict['baseline_model']['checkpoint_path']
-    ckpt_savedir = util_path_processer.ckpt_savedir(dataset_name=trained_dataset_name,
-                                                    params_hash=trained_model_params_id)
+
     # test_log_savedir = os.path.join(test_info_dict['test_log_savedir'], f'{trained_model_params_id}_trained',
     #                                 f'{test_info_hash}_test')
     test_log_savedir = util_path_processer.test_log_savedir(dataset_name=test_dataset_name,
@@ -162,7 +161,7 @@ def test(util_path_processer: dfa_utils.UtilPathProcessor,
                 sampled_ids_this_batch, task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
             # while test_batch_idx < test_info_dict['num_steps_per_ckpt']:
             #     task_name_this_batch, test_feedback_batch = next(test_feedback_generator)
-            assert len(sampled_ids_this_batch) == 1
+            # assert len(sampled_ids_this_batch) == 1
             cur_sampled_id = sampled_ids_this_batch[0]
             if not cur_sampled_id == sampled_id_remain:
                 sampled_id_remain = cur_sampled_id

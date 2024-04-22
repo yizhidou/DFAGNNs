@@ -464,10 +464,10 @@ class SampleLoader:
         # if self.sample_path_processor.statistics_savepath:
         #     self._merge_statistics(sample_id, sample_statistics)
         # print(f'dfa_utils line 359, the real_trace_len = {printed_trace_len}')
-        if self.if_sync and printed_trace_len > self.expected_trace_len and not self.trace_sample_from_start:
-            trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
-        else:
-            trace_start_idx = 0
+        # if self.if_sync and printed_trace_len > self.expected_trace_len and not self.trace_sample_from_start:
+        #     trace_start_idx = self._rng.randint(0, printed_trace_len - self.expected_trace_len)
+        # else:
+        #     trace_start_idx = 0
         # trace_list, selected_ip_indices_base, num_pp_from_trace = self._load_sparse_trace_from_bytes(
         #     task_name=task_name,
         #     trace_bytes=trace_chunck,
@@ -584,23 +584,34 @@ def dim_expand_to(x, y):
     return x
 
 
-def filter_sample_list(statistics_savepath,
+def filter_sample_list(full_statistics_savepath,
                        errored_sample_ids,
                        max_num_pp,
                        min_num_pp,
+                       cfg_edges_rate,
                        sample_id_savepath):
-    with open(statistics_savepath) as statistics_loader:
-        statistics_dict = json.load(statistics_loader)
+    assert min_num_pp < max_num_pp
+    with open(full_statistics_savepath) as statistics_loader:
+        full_statistics_dict = json.load(statistics_loader)
 
     sample_id_list = []
     with open(sample_id_savepath) as sample_ids_loader:
-        for line in sample_ids_loader.readlines():
+        for line_number, line in enumerate(sample_ids_loader.readlines()):
             sample_id = line.strip()
-            if sample_id in statistics_dict:
-                if statistics_dict[sample_id] > max_num_pp or statistics_dict[sample_id] < min_num_pp:
+            # if len(sample_id) < 2:
+            #     continue
+            if sample_id in full_statistics_dict:
+                num_pp, num_cfg = full_statistics_dict[sample_id][:2]
+                if num_pp > max_num_pp or num_pp < min_num_pp:
+                    continue
+                if num_cfg > max_num_pp * cfg_edges_rate:
                     continue
             else:
+                # try:
                 assert sample_id in errored_sample_ids
+                # except AssertionError:
+                #     print(f'{sample_id} is neither in statistics nor in errored! its len is: {len(sample_id)}; ln = {line_number}')
+                #     exit(666)
                 continue
             sample_id_list.append(sample_id)
     return sample_id_list
@@ -830,10 +841,10 @@ def compute_hash(file_path,
         # Read and update hash in chunks of 4K
         for line in f:
             flag = 1
-            for skip_item in skip_item_list:
-                if line.startswith(skip_item):
-                    flag = 0
-                    break
+            # for skip_item in skip_item_list:
+            #     if line.startswith(skip_item):
+            #         flag = 0
+            #         break
             if flag:
                 sha256_hash.update(line)
     return sha256_hash.hexdigest()

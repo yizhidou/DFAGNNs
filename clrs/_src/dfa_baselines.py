@@ -588,7 +588,8 @@ class DFABaselineModel(model.Model):
             # assert type_ == specs.Type.CATEGORICAL
             mask = feedback.trace_o.data[..., 0] != specs.OutputClass.MASKED
             # truth_trace_o = jnp.argmax(feedback.trace_o.data, -1)
-        if trace_h_pred is not None:
+        if return_hints:
+            assert trace_h_pred is not None
             # print(f'dfa_baselines line 520, return_hints = {return_hints};')
             # print(
             #     f'the shape of trace_h_pred is {trace_h_pred.shape};\nthe shape of truth.trace_h is: {jnp.argmax(feedback.features.trace_h.data[1:, ...], -1).shape}')
@@ -604,9 +605,12 @@ class DFABaselineModel(model.Model):
                                                                                                          mask=mask,
                                                                                                          truth_data=truth_trace_h_i,
                                                                                                          pred_data=pred_trace_h_i)
-                trace_h_f1_list.append(f_1_of_this_step.item())
-            print('dfa_baselines line 586, trace_h_f1_list is:')
-            print(trace_h_f1_list)
+                trace_h_f1_list.append(float(f_1_of_this_step))
+            # print('dfa_baselines line 586, trace_h_f1_list is:')
+            # print(trace_h_f1_list)
+            mean_trace_h_f1 = sum(trace_h_f1_list) / float(len(trace_h_f1_list))
+            precision, recall, f_1 = self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)
+            return mean_trace_h_f1, precision, recall, f_1
 
         # truth_trace_o = jnp.argmax(feedback.trace_o.data[mask], -1) if type_ == specs.Type.CATEGORICAL else feedback.trace_o.data[mask]
         return self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)
