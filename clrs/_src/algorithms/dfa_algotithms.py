@@ -271,8 +271,8 @@ def dfa_v2(dfa_sample_loader: dfa_utils.SampleLoader,
                      'cfg_edges': cfg_edges,
                      # 'cfg_backward': cfg_edges_backward
                  })
-    # for time_idx in range(0, len(trace_list) - 1):
-    for time_idx in range(0, len(trace_list)):
+    # for time_idx in range(0, len(trace_list)):
+    for time_idx in range(0, len(trace_list) - 1):
         probing.push(probes,
                      specs.Stage.HINT,
                      next_probe={
@@ -288,6 +288,6 @@ def dfa_v2(dfa_sample_loader: dfa_utils.SampleLoader,
     edge_indices_dict, mask_dict = dfa_probing.finalize_for_dfa_v1(probes=probes,
                                                                    expected_nb_nodes=dfa_sample_loader.max_num_pp,
                                                                    expected_nb_cfg_edges=expected_nb_cfg_edges,
-                                                                   expected_hint_len=dfa_sample_loader.expected_trace_len,
-                                                                   full_trace_len=full_trace_len)  # used to be expected_hint_len
+                                                                   expected_hint_len=dfa_sample_loader.expected_hint_len,  # used to be expected_trace_len
+                                                                   full_trace_len=full_trace_len)
     return edge_indices_dict, mask_dict, probes

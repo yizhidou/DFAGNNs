@@ -21,8 +21,8 @@ def rename_vali_params_file(params_savedir,
     new_params_filename = f'{train_params_id}.{params_hash}.vali'
     tmp_list = params_filename.split('.')
     if len(tmp_list) == 3:
-        assert params_filename == new_params_filename
-        return params_hash, cur_params_filepath
+        if params_filename == new_params_filename:
+            return params_hash, cur_params_filepath
     new_params_filepath = os.path.join(params_savedir, new_params_filename)
     os.system(f'mv {cur_params_filepath} {new_params_filepath}')
     if not os.path.isfile(new_params_filepath):
@@ -33,6 +33,7 @@ def rename_vali_params_file(params_savedir,
 
 def validate(vali_params_savedir: str,
              vali_params_filename: str,
+             ckpt_idx_list,
              ckpt_step:int,
              if_clear,
              if_log):
@@ -82,8 +83,8 @@ def validate(vali_params_savedir: str,
                                                         **train_params_dict['dfa_net'],
                                                         **train_params_dict['baseline_model'],
                                                         checkpoint_path=ckpt_savedir)
-    if iterate_entire_dataset:
-        vali_sampler.reset_sample_id_iter()
+    # if iterate_entire_dataset:
+    #     vali_sampler.reset_sample_id_iter()
     _, _, init_feedback = next(vali_feedback_generator)
     next(vali_feedback_generator)
     next(vali_feedback_generator)
@@ -94,22 +95,24 @@ def validate(vali_params_savedir: str,
     os.makedirs(vali_log_savedir, exist_ok=True)
     vali_log_savepath_list = []
     ckpt_filename_list = []
-    ckpt_count = 0
+    ckpt_count_in_total = 0
     for fn in os.listdir(ckpt_savedir):
         if not fn.startswith('.'):
-            ckpt_count += 1
-    for idx in range(ckpt_count):
-        if idx % ckpt_step == 0:
+            ckpt_count_in_total += 1
+    if ckpt_idx_list is not None:
+        assert ckpt_step is None
+        for ckpt_idx in ckpt_idx_list:
+            ckpt_filename_list.append(f'{train_params_id}.epoch_{ckpt_idx}')
+            vali_log_savepath_list.append(os.path.join(vali_log_savedir, f'epoch_{ckpt_idx}.vali_log'))
+    elif ckpt_step is not None:
+        for idx in range(ckpt_count_in_total):
+            if idx % ckpt_step == 0:
+                ckpt_filename_list.append(f'{train_params_id}.epoch_{idx}')
+                vali_log_savepath_list.append(os.path.join(vali_log_savedir, f'epoch_{idx}.vali_log'))
+    else:
+        for idx in range(ckpt_count_in_total):
             ckpt_filename_list.append(f'{train_params_id}.epoch_{idx}')
             vali_log_savepath_list.append(os.path.join(vali_log_savedir, f'epoch_{idx}.vali_log'))
-    # if ckpt_idx_list is None:
-    #     #   vali on all the ckpts
-    #     for fn in os.listdir(ckpt_savedir):
-    #         if not fn.startswith('.'):
-    #             ckpt_count += 1
-    #     for idx in range(ckpt_count):
-    #         ckpt_filename_list.append(f'{train_params_id}.epoch_{idx}')
-    #         vali_log_savepath_list.append(os.path.join(vali_log_savedir, f'epoch_{idx}.vali_log'))
     # else:
     #     for ckpt_idx in ckpt_idx_list:
     #         ckpt_filename_list.append(f'{train_params_id}.epoch_{ckpt_idx}')
@@ -121,8 +124,9 @@ def validate(vali_params_savedir: str,
             os.system(f'rm {vali_log_savepath}')
             print('old log has been removed!')
         if os.path.isfile(vali_log_savepath) and not if_clear and if_log:
-            print('Previous vali log exist! Please specify if clear the previous log or not!')
-            exit(1)
+            print(f'Previous vali log with {vali_log_savepath} exists! so we just skip!')
+            continue
+            # exit(1)
         ckpt_idx = ckpt_filename.split('_')[-1].strip()
         print(f'ckpt_{ckpt_idx} on validation...')
         dfa_baseline_model.restore_model(file_name=ckpt_filename)
@@ -136,7 +140,7 @@ def validate(vali_params_savedir: str,
             if iterate_entire_dataset:
                 try:
                     sampled_ids_this_batch, task_name_this_batch, vali_feedback_batch = next(vali_feedback_generator)
-                except RuntimeError:  # Stop
+                except:  # Stop
                     break
             else:
                 if vali_batch_idx == vali_params_dict['num_steps_per_ckpt'] and liveness_done and reachability_done and dominance_done:
@@ -144,6 +148,9 @@ def validate(vali_params_savedir: str,
                 sampled_ids_this_batch, task_name_this_batch, vali_feedback_batch = next(vali_feedback_generator)
             cur_sampled_id = sampled_ids_this_batch[0]
             if not cur_sampled_id == sampled_id_remain:
+                new_log_str = f'\ntest with ckpt_{ckpt_idx}_batch_{int(vali_batch_idx)} {cur_sampled_id}: '
+                print(new_log_str)
+                log_str += new_log_str
                 sampled_id_remain = cur_sampled_id
                 vali_batch_idx += 1
                 liveness_done, reachability_done, dominance_done = False, False, False
@@ -197,13 +204,17 @@ def validate(vali_params_savedir: str,
         log_str = ''
         if iterate_entire_dataset:
             vali_sampler.reset_sample_id_iter()
+            vali_feedback_generator = dfa_samplers.FeedbackGenerator_all_tasks(dfa_sampler=vali_sampler,
+                                                                               batch_size=
+                                                                               vali_params_dict['dfa_sampler'][
+                                                                                   'batch_size'])
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Please input the params filename')
     parser.add_argument('--params', type=str, required=True)
-    # parser.add_argument('--ckpt_idx', type=int, nargs="+", default=None, required=False)
-    parser.add_argument('--ckpt_step', type=int, required=True)
+    parser.add_argument('--ckpt_idx', type=int, nargs="+", default=None, required=False)
+    parser.add_argument('--ckpt_step', type=int, default=None)
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--unlog', action='store_true')
     args = parser.parse_args()
@@ -215,6 +226,7 @@ if __name__ == "__main__":
     # params_filename = 'params_not_hint_as_outpt.json'
     validate(vali_params_savedir=params_savedir,
              vali_params_filename=args.params,
+             ckpt_idx_list=args.ckpt_idx,
              ckpt_step=args.ckpt_step,
              if_clear=args.clear,
              if_log=not args.unlog)

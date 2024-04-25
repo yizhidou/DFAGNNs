@@ -87,6 +87,7 @@ def parse_train_params(params_hash: str,
         raise dfa_utils.DFAException(dfa_utils.DFAException.UNRECOGNIZED_GNN_TYPE)
     params_dict['baseline_model']['version_of_DFANet'] = version_of_DFANet
     assert params_dict['dfa_sampler']['batch_size'] == 1, 'Sorry but we only support batch_size = 1 by now'
+    # assert params_dict['train_sample_loader']['expected_trace_len'] > 2, 'Only if expected_trace_len > 2 that GNN can work!'
     return params_dict
 
 
@@ -162,8 +163,8 @@ def train(params_savedir, params_filename,
     # vali_step_per_epoch = params_dict['task']['num_samples_vali_set']
     iterate_entire_train_set = True if train_step_per_epoch < 0 else False
     # iterate_entire_vali_set = True if vali_step_per_epoch < 0 else False
-    if iterate_entire_train_set:
-        train_sampler.reset_sample_id_iter()
+    # if iterate_entire_train_set:
+    #     train_sampler.reset_sample_id_iter()
     # if iterate_entire_vali_set:
     #     vali_sampler.reset_sample_id_iter()
     log_str = ''
@@ -335,6 +336,9 @@ def train(params_savedir, params_filename,
             print('the model has been saved~')
         if iterate_entire_train_set:
             train_sampler.reset_sample_id_iter()
+            train_feedback_generator = dfa_samplers.FeedbackGenerator_all_tasks(dfa_sampler=train_sampler,
+                                                                                batch_size=params_dict['dfa_sampler'][
+                                                                                    'batch_size'])
         # log errored sample ids
         sample_path_processor.dump_errored_samples_to_log()
 

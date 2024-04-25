@@ -36,7 +36,7 @@ class DFASampler(samplers.Sampler):
                  iterate_all: bool = False):
         self.sample_id_list = sample_id_list
         self.iterate_all = iterate_all
-        self.sample_id_list_iter = None
+        self.sample_id_list_iter = iter(sample_id_list)
         self.seed = seed
         self.task_name = task_name
         self.sample_loader = sample_loader
@@ -74,6 +74,7 @@ class DFASampler(samplers.Sampler):
 
     def reset_sample_id_iter(self):
         assert self.iterate_all
+        print('dfa_sampler line 77, sample_id_list_iter has been reset??')
         self.sample_id_list_iter = iter(self.sample_id_list)
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
         # sample_id = next(self.sample_id_generator)
@@ -128,7 +129,7 @@ class DFASampler(samplers.Sampler):
             # else:
             #     sample_id = self._sample_data(*args, **kwargs)
             sample_id = self._sample_data(*args, **kwargs)
-            print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
+            # print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
             # self.num_sample_id_recorded += 1
             # self.log_sample_id_str += f'{sample_id}\n'
             # if self.num_sample_id_recorded % 500 == 0:
@@ -225,7 +226,7 @@ class DFASampler(samplers.Sampler):
         num_created_samples = 0
         while num_created_samples < num_samples:
             sample_id = self._sample_data(*args, **kwargs)
-            print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
+            # print(f'{sample_id} has been sampled...(dfa_samplers line 110)')
             for task_idx, task_name_for_this_batch in enumerate(task_names_list):
                 try:
                     # print(f'dfa_sampler line 231, {task_name_for_this_batch} is on going...')

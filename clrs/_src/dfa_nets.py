@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import chex
 
 from clrs._src import dfa_decoders
-from clrs._src import encoders
+from clrs._src import encoders, decoders
 from clrs._src import probing
 from clrs._src import dfa_processors, dfa_utils
 from clrs._src import samplers, dfa_samplers
@@ -89,6 +89,41 @@ class DFANet(nets.Net):
         #     assert 'liveness' in self.spec[0].keys() or 'dominance' in self.spec[0].keys() or 'reachability' in self.spec[0].keys()
         #     self._dfa_version = None
 
+    def _construct_encoders_decoders(self):
+        """Constructs encoders and decoders, separate for each algorithm."""
+        encoders_ = []
+        decoders_ = []
+        enc_algo_idx = None
+        for (algo_idx, spec) in enumerate(self.spec):
+            enc = {}
+            dec = {}
+            for name, (stage, loc, t) in spec.items():
+                # if stage == _Stage.INPUT or (
+                #         stage == _Stage.HINT and self.encode_hints):
+                if stage == _Stage.INPUT or stage == _Stage.HINT:
+                    # Build input encoders.
+                    if name == specs.ALGO_IDX_INPUT_NAME:
+                        if enc_algo_idx is None:
+                            enc_algo_idx = [hk.Linear(self.hidden_dim,
+                                                      name=f'{name}_enc_linear')]
+                        enc[name] = enc_algo_idx
+                    else:
+                        enc[name] = encoders.construct_encoders(
+                            stage, loc, t, hidden_dim=self.hidden_dim,
+                            init=self.encoder_init,
+                            name=f'algo_{algo_idx}_{name}')
+
+                if stage == _Stage.OUTPUT or (
+                        stage == _Stage.HINT and self.decode_hints):
+                    # Build output decoders.
+                    dec[name] = decoders.construct_decoders(
+                        loc, t, hidden_dim=self.hidden_dim,
+                        nb_dims=None if self.nb_dims is None else self.nb_dims[algo_idx][name],
+                        name=f'algo_{algo_idx}_{name}')
+            encoders_.append(enc)
+            decoders_.append(dec)
+
+        return encoders_, decoders_
     def __call__(self, features_list: List[_Features],
                  repred: bool,
                  algorithm_index: int,
@@ -668,7 +703,8 @@ class DFANet_v4(DFANet):
             if self.take_hint_as_outpt:
                 pred_trace_o = pred_trace_h_i
             else:
-                pred_trace_o = jnp.squeeze(trace_o_decoder(new_hint_state), -1)
+                # pred_trace_o = jnp.squeeze(trace_o_decoder(new_hint_state), -1)
+                pred_trace_o = trace_o_decoder(new_hint_state)
         else:
             pred_trace_h_i = None
             pred_trace_o = trace_o_decoder(new_hint_state)
