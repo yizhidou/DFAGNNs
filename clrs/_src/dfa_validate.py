@@ -34,7 +34,7 @@ def rename_vali_params_file(params_savedir,
 def validate(vali_params_savedir: str,
              vali_params_filename: str,
              ckpt_idx_list,
-             ckpt_step:int,
+             ckpt_step: int,
              if_clear,
              if_log):
     vali_params_id, vali_params_savepath = rename_vali_params_file(
@@ -79,6 +79,8 @@ def validate(vali_params_savedir: str,
     # print(f'dfa_vali line 78 ckpt_savedir = {ckpt_savedir}')
     # exit(666)
     del train_params_dict['baseline_model']['checkpoint_path']
+    del train_params_dict['dfa_net']['encode_hints']
+    del train_params_dict['dfa_net']['decode_hints']
     dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,
                                                         **train_params_dict['dfa_net'],
                                                         **train_params_dict['baseline_model'],
@@ -143,7 +145,8 @@ def validate(vali_params_savedir: str,
                 except:  # Stop
                     break
             else:
-                if vali_batch_idx == vali_params_dict['num_steps_per_ckpt'] and liveness_done and reachability_done and dominance_done:
+                if vali_batch_idx == vali_params_dict[
+                    'num_steps_per_ckpt'] and liveness_done and reachability_done and dominance_done:
                     break
                 sampled_ids_this_batch, task_name_this_batch, vali_feedback_batch = next(vali_feedback_generator)
             cur_sampled_id = sampled_ids_this_batch[0]
@@ -158,7 +161,11 @@ def validate(vali_params_savedir: str,
             mean_trace_f1, vali_precision, vali_recall, vali_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=vali_feedback_batch,
-                return_hints=True)
+                return_hints=True,
+                print_full_trace_h_f1_list=not if_log)
+            full_trace_len_this_batch = vali_feedback_batch.features.mask_dict['full_trace_len']
+            print(f'full_trace_len = {full_trace_len_this_batch}. (dfa_vali line 163)')
+            # exit(666)
             new_log_str = f'{task_name_this_batch}: mean_t_f1 = {mean_trace_f1:.4f}; p = {vali_precision:.4f}; r = {vali_recall:.4f}; f1 = {vali_f1:.4f}. '
             print(new_log_str)
             log_str += new_log_str

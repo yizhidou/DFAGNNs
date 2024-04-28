@@ -53,12 +53,14 @@ class DFANet(nets.Net):
             hint_repred_mode: str,
             take_hint_as_outpt: bool,
             dfa_version: Union[None, int],
+            no_extra_layer: bool = False,
             name: str = 'dfa_net',
     ):
         # print('dfa_nets line 56, in dfa_nets.__init__')
         """Constructs a `Net`."""
         self.take_hint_as_outpt = take_hint_as_outpt
         self.dfa_version = dfa_version
+        self.no_extra_layer = no_extra_layer
         if self.dfa_version is None or self.dfa_version == 0:
             nb_dims = None
         else:
@@ -185,6 +187,7 @@ class DFANet(nets.Net):
             if self.take_hint_as_outpt:
                 hint_len = features.mask_dict['hint_len']
                 nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
+                print(f'dfa_nets line 188, len of trace_h is: {trace_h.data.shape[0]}; hint_len = {hint_len}')
             else:
                 hint_len = features.mask_dict['hint_len'] - 1
                 nb_mp_steps = max(1, trace_h.data.shape[0] - 2)
@@ -270,9 +273,17 @@ class DFANet(nets.Net):
                 jnp.arange(nb_mp_steps - 1) + 1,
                 length=nb_mp_steps - 1)
             # # \begin{commit_2}
-            # print('dfa_nets line 200, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
-            # print(
-            #     f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+            print('dfa_nets line 273, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
+            print(f'mp_state.pred_trace_o: {mp_state.pred_trace_o.shape}')
+            print(
+                f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+            # if jnp.array_equal(output_mp_state.pred_trace_o, mp_state.pred_trace_o):
+            # if jnp.equal(output_mp_state.pred_trace_o, mp_state.pred_trace_o).all():
+            # if output_mp_state.pred_trace_o == mp_state.pred_trace_o:
+            #     print('dfa_nets line 277, the scan did not make any difference~')
+            # else:
+            #     print('dfa_nets line 281, the scan did make a difference!')
+            #     assert False
             # if return_hints:
             #     print('since return_hint is True:')
             #     print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
@@ -347,6 +358,8 @@ class DFANet(nets.Net):
         # print(f'i = {i}; repred = {repred}; return_hints = {return_hints}; return_all_outputs = {return_all_outputs}')
         trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
         if self.decode_hints and not first_step:
+            print('dfa_nets line 350!!')
+            # exit(666)
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or
                                 (self._hint_repred_mode == 'hard_on_eval' and repred))

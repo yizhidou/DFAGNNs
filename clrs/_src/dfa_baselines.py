@@ -76,6 +76,8 @@ class DFABaselineModel(model.Model):
             freeze_processor: bool,
             version_of_DFANet: Union[None, int],
             dfa_version: Union[None, int],
+            exclude_output_loss: bool = False,
+            exclude_trace_loss: bool = False,
             encoder_init: str = 'default',
             name: str = 'dfa_base_model'):
         """Constructor for BaselineModel.
@@ -141,6 +143,11 @@ class DFABaselineModel(model.Model):
         assert hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
 
         self.decode_hints = decode_hints
+        if not self.decode_hints and exclude_output_loss:
+            assert False, 'you have excluded both output loss and hint loss!'
+        self.exclude_output_loss = exclude_output_loss
+        self.exclude_trace_loss = exclude_trace_loss
+        self.exclude_trace_loss = exclude_trace_loss
         self.take_hint_as_outpt = take_hint_as_outpt
         self.checkpoint_path = checkpoint_path
         self.name = name
@@ -361,12 +368,13 @@ class DFABaselineModel(model.Model):
         total_loss = 0.0
 
         # Calculate output loss.
-        truth_trace_o = feedback.trace_o
-        total_loss += dfa_losses.trace_o_loss(truth=truth_trace_o,
-                                              pred=pred_trace_o)
+        if not self.exclude_output_loss:
+            truth_trace_o = feedback.trace_o
+            total_loss += dfa_losses.trace_o_loss(truth=truth_trace_o,
+                                                  pred=pred_trace_o)
 
         # Optionally accumulate hint losses.
-        if self.decode_hints:
+        if self.decode_hints and not self.exclude_trace_loss:
             truth_trace_h = feedback.features.trace_h
             total_loss += dfa_losses.trace_h_loss(truth=truth_trace_h,
                                                   preds=pred_trace_h_i,
@@ -569,7 +577,8 @@ class DFABaselineModel(model.Model):
                      feedback: _Feedback,
                      algorithm_index: Optional[int] = None,
                      return_hints: bool = False,
-                     return_all_outputs: bool = False
+                     return_all_outputs: bool = False,
+                     print_full_trace_h_f1_list = False
                      ):
         if algorithm_index is None:
             assert len(self._spec) == 1
@@ -608,8 +617,9 @@ class DFABaselineModel(model.Model):
                                                                                                          truth_data=truth_trace_h_i,
                                                                                                          pred_data=pred_trace_h_i)
                 trace_h_f1_list.append(float(f_1_of_this_step))
-            # print('dfa_baselines line 586, trace_h_f1_list is:')
-            # print(trace_h_f1_list)
+            if print_full_trace_h_f1_list:
+                print('dfa_baselines line 586, trace_h_f1_list is:')
+                print(trace_h_f1_list)
             precision, recall, f_1 = self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)
             if len(trace_h_f1_list) == 0:
                 mean_trace_h_f1 = f_1

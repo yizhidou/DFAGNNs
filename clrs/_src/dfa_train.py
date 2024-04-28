@@ -240,7 +240,7 @@ def train(params_savedir, params_filename,
         # log_str = ''
         # if iterate_entire_vali_set:
         #     vali_sampler.reset_sample_id_iter()
-        if epoch_idx == 0:
+        if epoch_idx == 0 and if_log:
             dfa_baseline_model.save_model(file_name=f'{params_hash}.epoch_{0}')
             print('the model (untrained) has been saved~')
         # train
@@ -280,8 +280,12 @@ def train(params_savedir, params_filename,
             mean_trace_f1, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=train_feedback_batch,
-                return_hints=True)
+                return_hints=True,
+                print_full_trace_h_f1_list=not if_log)
             # new_log_str = f'train epoch_{epoch_idx}_batch_{int(train_batch_idx)} ({task_name_for_this_batch}): loss = {batch_train_loss}; precision = {train_precision}; recall = {train_recall}; F1 = {train_f1}\n'
+            # full_trace_len_this_batch = train_feedback_batch.features.mask_dict['full_trace_len']
+            # print(f'full_trace_len = {full_trace_len_this_batch}. (dfa_train line 286)')
+            # exit(666)
             new_log_str = f'{task_name_for_this_batch}: mean_t_f1 = {mean_trace_f1:.4f}; loss = {batch_train_loss}; p = {train_precision:.4f}; recall = {train_recall:.4f}; F1 = {train_f1:.4f}. '
             print(new_log_str)
             log_str += new_log_str
@@ -341,6 +345,7 @@ def train(params_savedir, params_filename,
                                                                                     'batch_size'])
         # log errored sample ids
         sample_path_processor.dump_errored_samples_to_log()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Please input the params filename')
