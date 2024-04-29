@@ -53,14 +53,14 @@ class DFANet(nets.Net):
             hint_repred_mode: str,
             take_hint_as_outpt: bool,
             dfa_version: Union[None, int],
-            no_extra_layer: bool = False,
+            just_one_layer: bool,
             name: str = 'dfa_net',
     ):
         # print('dfa_nets line 56, in dfa_nets.__init__')
         """Constructs a `Net`."""
         self.take_hint_as_outpt = take_hint_as_outpt
         self.dfa_version = dfa_version
-        self.no_extra_layer = no_extra_layer
+        self.just_one_layer = just_one_layer
         if self.dfa_version is None or self.dfa_version == 0:
             nb_dims = None
         else:
@@ -244,83 +244,35 @@ class DFANet(nets.Net):
                 first_step=True,
                 **common_args
             )
-            # # \begin{commit_1}
-            # print('dfa_nets line 188, in dfa_nets.__call__, the **first** call of _dfa_msg_passing_step is done:')
-            # print(
-            #     f'mp_state.pred_trace_o:{mp_state.pred_trace_o.shape}; mp_state.pred_trace_h_i: {mp_state.pred_trace_h_i.shape}')
-            # if return_hints:
-            #     print('since return_hint is True:')
-            #     print(f'lean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
-            # else:
-            #     print('return_hint is False: ')
-            #     print(f'lean_mp_state.pred_trace_h_i = {lean_mp_state.pred_trace_h_i}')
-            # if return_all_outputs:
-            #     print('since return_all_output is True:')
-            #     print(f'lean_mp_state.pred_trace_o: {lean_mp_state.pred_trace_o.shape}')
-            # else:
-            #     print('return_all_output is False')
-            #     print(f'lean_mp_state.pred_trace_o = {lean_mp_state.pred_trace_o}')
-            # # \end{commit_1}
-            # # Then scan through the rest.
-            scan_fn = functools.partial(
-                self._dfa_msg_passing_step,
-                first_step=False,
-                **common_args)
+            if not self.just_one_layer:
+                scan_fn = functools.partial(
+                    self._dfa_msg_passing_step,
+                    first_step=False,
+                    **common_args)
 
-            output_mp_state, accum_mp_state = hk.scan(
-                scan_fn,
-                mp_state,
-                jnp.arange(nb_mp_steps - 1) + 1,
-                length=nb_mp_steps - 1)
-            # # \begin{commit_2}
-            print('dfa_nets line 273, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
-            print(f'mp_state.pred_trace_o: {mp_state.pred_trace_o.shape}')
-            print(
-                f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
-            # if jnp.array_equal(output_mp_state.pred_trace_o, mp_state.pred_trace_o):
-            # if jnp.equal(output_mp_state.pred_trace_o, mp_state.pred_trace_o).all():
-            # if output_mp_state.pred_trace_o == mp_state.pred_trace_o:
-            #     print('dfa_nets line 277, the scan did not make any difference~')
-            # else:
-            #     print('dfa_nets line 281, the scan did make a difference!')
-            #     assert False
-            # if return_hints:
-            #     print('since return_hint is True:')
-            #     print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
-            # else:
-            #     print('return_hint is False: ')
-            #     print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
-            # if return_all_outputs:
-            #     print('since return_all_output is True:')
-            #     print(f'accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
-            # else:
-            #     print('return_all_output is False')
-            #     print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
-            # # \end{commit_2}
+                output_mp_state, accum_mp_state = hk.scan(
+                    scan_fn,
+                    mp_state,
+                    jnp.arange(nb_mp_steps - 1) + 1,
+                    length=nb_mp_steps - 1)
+                # # \begin{commit_2}
+                print('dfa_nets line 273, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
+                print(f'mp_state.pred_trace_o: {mp_state.pred_trace_o.shape}')
+                print(
+                    f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+                if return_hints:
+                    print(f'in lean_mp_state, lean_mp_state.pred_trace_h_i.shape = {lean_mp_state.pred_trace_h_i.shape}')
+                    print(f'in accum_mp_state, accum_mp_state.pred_trace_h_i.shape = {accum_mp_state.pred_trace_h_i.shape}')
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
         # is used only to init parameters.
-        # if return_hints:
-        #     print(f'in dfa_nets line 219, in dfa_nets.__call__, before the concat of lean_mp_state and accum_mp_state:')
-        #     print(f'lean_mp_state.pred_trace_h_i: {lean_mp_state.pred_trace_h_i.shape}')
-        #     print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
+        if self.just_one_layer:
+            # assert hint_len == 1
+            return mp_state.pred_trace_o, mp_state.pred_trace_h_i
         accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
-        # print('dfa_nets line 221, in dfa_nets.__call__, after the concat of lean_mp_state and accum_mp_state:')
-        # if return_hints:
-        #     print('since return_hint is True:')
-        #     print(f'concated accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
-        # else:
-        #     print('since return_hint is False: ')
-        #     print(f'accum_mp_state.pred_trace_h_i = {accum_mp_state.pred_trace_h_i}')
-        # if return_all_outputs:
-        #     print('since return_all_output is True:')
-        #     print(f'concated accum_mp_state.pred_trace_o: {accum_mp_state.pred_trace_o.shape}')
-        # else:
-        #     print('since return_all_output is False')
-        #     print(f'accum_mp_state.pred_trace_o = {accum_mp_state.pred_trace_o}')
 
         if return_all_outputs:
             pred_trace_o = jnp.stack(accum_mp_state.pred_trace_o)
@@ -331,7 +283,8 @@ class DFANet(nets.Net):
             pred_trace_o = output_mp_state.pred_trace_o
         # hint_preds = invert(accum_mp_state.hint_preds)
         pred_trace_h_i = accum_mp_state.pred_trace_h_i
-        # print(f'dfa_nets line 266, pred_trace_h_i: {pred_trace_h_i.shape}')
+        if return_hints:
+            print(f'dfa_nets line 283, pred_trace_h_i: {pred_trace_h_i.shape}')
         # print(f'return_hints is: {return_hints}')
         # print(f'dfa_nets line 290, pred_trace_o: {pred_trace_o}')
         # exit(666)

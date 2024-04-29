@@ -81,9 +81,14 @@ def validate(vali_params_savedir: str,
     del train_params_dict['baseline_model']['checkpoint_path']
     del train_params_dict['dfa_net']['encode_hints']
     del train_params_dict['dfa_net']['decode_hints']
+    if train_params_dict['dfa_net']['just_one_layer'] and vali_params_dict['vali_sample_loader']['expected_trace_len'] == 2:
+        train_params_dict['dfa_net']['just_one_layer'] = True
+    else:
+        train_params_dict['dfa_net']['just_one_layer'] = False
     dfa_baseline_model = dfa_baselines.DFABaselineModel(processor_factory=processor_factory,
                                                         **train_params_dict['dfa_net'],
                                                         **train_params_dict['baseline_model'],
+                                                        **vali_params_dict['dfa_net'],
                                                         checkpoint_path=ckpt_savedir)
     # if iterate_entire_dataset:
     #     vali_sampler.reset_sample_id_iter()

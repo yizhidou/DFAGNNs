@@ -88,6 +88,8 @@ def parse_train_params(params_hash: str,
     params_dict['baseline_model']['version_of_DFANet'] = version_of_DFANet
     assert params_dict['dfa_sampler']['batch_size'] == 1, 'Sorry but we only support batch_size = 1 by now'
     # assert params_dict['train_sample_loader']['expected_trace_len'] > 2, 'Only if expected_trace_len > 2 that GNN can work!'
+    if 'just_one_layer' in params_dict['dfa_net'] and params_dict['dfa_net']['just_one_layer']:
+        assert params_dict['train_sample_loader']['expected_trace_len'] == 2
     return params_dict
 
 
@@ -274,8 +276,13 @@ def train(params_savedir, params_filename,
             # while train_batch_idx < train_step_per_epoch:
             #     task_name_for_this_batch, train_feedback_batch = next(train_feedback_generator)
             new_rng_key, rng_key = jax.random.split(rng_key)
+            # dfa_baseline_model.compute_grad(new_rng_key, train_feedback_batch)
+            # trace_loss = dfa_baseline_model.compute_trace_loss(rng_key=new_rng_key,
+            #                                                    feedback=train_feedback_batch)
+            # print(f'trace_loss = {trace_loss}')
+
             batch_train_loss = dfa_baseline_model.feedback(rng_key=new_rng_key,
-                                                           feedback=train_feedback_batch)
+                                                            feedback=train_feedback_batch)
             new_rng_key, rng_key = jax.random.split(rng_key)
             mean_trace_f1, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,

@@ -76,6 +76,7 @@ class DFABaselineModel(model.Model):
             freeze_processor: bool,
             version_of_DFANet: Union[None, int],
             dfa_version: Union[None, int],
+            just_one_layer: bool = False,
             exclude_output_loss: bool = False,
             exclude_trace_loss: bool = False,
             encoder_init: str = 'default',
@@ -143,6 +144,7 @@ class DFABaselineModel(model.Model):
         assert hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
 
         self.decode_hints = decode_hints
+        self.just_one_layer = just_one_layer
         if not self.decode_hints and exclude_output_loss:
             assert False, 'you have excluded both output loss and hint loss!'
         self.exclude_output_loss = exclude_output_loss
@@ -192,6 +194,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -209,6 +212,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -226,6 +230,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -243,6 +248,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -260,6 +266,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -277,6 +284,7 @@ class DFABaselineModel(model.Model):
                                           hidden_dim=hidden_dim,
                                           encode_hints=encode_hints,
                                           decode_hints=self.decode_hints,
+                                          just_one_layer=self.just_one_layer,
                                           processor_factory=processor_factory,
                                           use_lstm=use_lstm,
                                           encoder_init=encoder_init,
@@ -304,6 +312,8 @@ class DFABaselineModel(model.Model):
         extra_args[static_arg] = 3
         # self.jitted_loss = func(self._compute_loss, **extra_args)
         self.jitted_grad = func(self._compute_grad, **extra_args)
+        extra_args[static_arg] = 4
+        self.jitted_trace_loss_grad = func(self._compute_trace_loss_grad, **extra_args)
         extra_args[static_arg] = 4
         self.jitted_feedback = func(self._feedback, donate_argnums=[0, 3],
                                     **extra_args)
@@ -366,7 +376,6 @@ class DFABaselineModel(model.Model):
         # nb_nodes = _nb_nodes(feedback, is_chunked=False)
         hint_len = feedback.features.mask_dict['hint_len']
         total_loss = 0.0
-
         # Calculate output loss.
         if not self.exclude_output_loss:
             truth_trace_o = feedback.trace_o
@@ -376,12 +385,64 @@ class DFABaselineModel(model.Model):
         # Optionally accumulate hint losses.
         if self.decode_hints and not self.exclude_trace_loss:
             truth_trace_h = feedback.features.trace_h
-            total_loss += dfa_losses.trace_h_loss(truth=truth_trace_h,
+            trace_loss = dfa_losses.trace_h_loss(truth=truth_trace_h,
                                                   preds=pred_trace_h_i,
                                                   lengths=hint_len,
                                                   take_hint_as_outpt=self.take_hint_as_outpt)
+            # print(f'dfa_baseline line391, trace_loss = {trace_loss}')
+            total_loss += trace_loss
         return total_loss
 
+    def _trace_loss(self, params, rng_key, feedback, algorithm_index):
+        """Calculates model loss f(feedback; params)."""
+        # output_preds, hint_preds \
+        # print('dfa_baselines line 359~ in _loss')
+        pred_trace_o, pred_trace_h_i = self.net_fn.apply(
+            params, rng_key, [feedback.features],
+            repred=False,
+            algorithm_index=algorithm_index,
+            return_hints=True,
+            return_all_outputs=False)
+
+        # nb_nodes = _nb_nodes(feedback, is_chunked=False)
+        hint_len = feedback.features.mask_dict['hint_len']
+
+        # Optionally accumulate hint losses.
+        assert self.decode_hints and not self.exclude_trace_loss
+        truth_trace_h = feedback.features.trace_h
+        trace_loss = dfa_losses.trace_h_loss(truth=truth_trace_h,
+                                                 preds=pred_trace_h_i,
+                                                 lengths=hint_len,
+                                                 take_hint_as_outpt=self.take_hint_as_outpt)
+
+        return trace_loss
+
+    def compute_trace_loss(
+            self,
+            rng_key: hk.PRNGSequence,
+            feedback: _Feedback,
+            algorithm_index: Optional[int] = None
+    ) -> float:
+        """Compute gradients."""
+        if algorithm_index is None:
+            assert len(self._spec) == 1
+            algorithm_index = 0
+        assert algorithm_index >= 0
+
+        # print('dfa_baselines line 290~ in compute_loss')
+        # Calculate gradients.
+        rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        feedback = baselines._maybe_pmap_data(feedback)
+        # rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
+        # features = baselines._maybe_pmap_data(feedback.features)
+        # trace_o_pred, trace_h_pred = self.jitted_predict(self._device_params, rng_keys, features,
+        #                                                  algorithm_index,
+        #                                                  return_hints=True,
+        #                                                  return_all_outputs=False)
+        trace_loss, _ = self.jitted_trace_loss_grad(
+            self._device_params, rng_keys, feedback, algorithm_index)
+        trace_loss = baselines._maybe_pick_first_pmapped(trace_loss)
+        return trace_loss
     def compute_grad(
             self,
             rng_key: hk.PRNGSequence,
@@ -453,6 +514,13 @@ class DFABaselineModel(model.Model):
         lss, grads = jax.value_and_grad(self._loss)(
             params, rng_key, feedback, algorithm_index)
         return self._maybe_pmean(lss), self._maybe_pmean(grads)
+
+    def _compute_trace_loss_grad(self, params, rng_key, feedback, algorithm_index):
+        # print('dfa_baselines line 246~ in _compute_grad')
+        lss, grads = jax.value_and_grad(self._trace_loss)(
+            params, rng_key, feedback, algorithm_index)
+        return self._maybe_pmean(lss), self._maybe_pmean(grads)
+
 
     def _get_pred_softmax_for_debug(self, params, rng_key: hk.PRNGSequence, features: _Features,
                                     algorithm_index: int, return_hints: bool,
@@ -726,27 +794,6 @@ class DFABaselineModel(model.Model):
             #         ))
 
         return losses_
-
-    # def compute_loss(
-    #         self,
-    #         rng_key: hk.PRNGSequence,
-    #         feedback: _Feedback,
-    #         algorithm_index: Optional[int] = None,
-    # ) -> float:
-    #     """Compute gradients."""
-    #
-    #     if algorithm_index is None:
-    #         assert len(self._spec) == 1
-    #         algorithm_index = 0
-    #     assert algorithm_index >= 0
-    #     # print('dfa_baselines line 290~ in compute_loss')
-    #     # Calculate gradients.
-    #     rng_keys = baselines._maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
-    #     feedback = baselines._maybe_pmap_data(feedback)
-    #     loss, _ = self.jitted_grad(
-    #         self._device_params, rng_keys, feedback, algorithm_index)
-    #     loss = baselines._maybe_pick_first_pmapped(loss)
-    #     return loss
 
 # @functools.partial(jax.jit, static_argnums=1)
 # def _pmap_data(data: Union[_Feedback, _Features], n_devices: int):
