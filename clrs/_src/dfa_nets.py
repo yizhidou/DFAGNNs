@@ -187,7 +187,7 @@ class DFANet(nets.Net):
             if self.take_hint_as_outpt:
                 hint_len = features.mask_dict['hint_len']
                 nb_mp_steps = max(1, trace_h.data.shape[0] - 1)
-                print(f'dfa_nets line 188, len of trace_h is: {trace_h.data.shape[0]}; hint_len = {hint_len}')
+                print(f'dfa_nets line 190, len of trace_h is: {trace_h.data.shape[0]}; hint_len = {hint_len}; nb_mp_steps = {nb_mp_steps}')
             else:
                 hint_len = features.mask_dict['hint_len'] - 1
                 nb_mp_steps = max(1, trace_h.data.shape[0] - 2)
@@ -197,7 +197,7 @@ class DFANet(nets.Net):
             # if this is the dfa algorithm, node_fts_shape_lead=(nb_nodes, nb_bits_each);
             # otherwise, node_fts_shape_lead=(nb_nodes, ).
 
-            print(f'dfa_nets line 135, in dfa_nets.__call__, nb_mp_steps = {nb_mp_steps}')  # checked
+            # print(f'dfa_nets line 135, in dfa_nets.__call__, nb_mp_steps = {nb_mp_steps}')  # checked
             if self.use_lstm and self.dfa_version is not None:
                 nb_nodes, nb_bits_each = node_fts_shape_lead
                 lstm_state = lstm_init(batch_size=batch_size * nb_nodes * nb_bits_each)
@@ -244,6 +244,10 @@ class DFANet(nets.Net):
                 first_step=True,
                 **common_args
             )
+            print('dfa_nets line 247, after the first layer of GNN,')
+            print(f'mp_state.pred_trace_o: {mp_state.pred_trace_o.shape}; mp_state.pred_trace_h: {mp_state.pred_trace_h_i.shape}')
+            if return_hints:
+                print(f'lean_mp_state.pred_trace_h: {lean_mp_state.pred_trace_h_i.shape}')
             if not self.just_one_layer:
                 scan_fn = functools.partial(
                     self._dfa_msg_passing_step,
@@ -256,13 +260,10 @@ class DFANet(nets.Net):
                     jnp.arange(nb_mp_steps - 1) + 1,
                     length=nb_mp_steps - 1)
                 # # \begin{commit_2}
-                print('dfa_nets line 273, in dfa_nets.__call__, the **scan** call of _dfa_msg_passing_step is done:')
-                print(f'mp_state.pred_trace_o: {mp_state.pred_trace_o.shape}')
-                print(
-                    f'output_mp_state.pred_trace_o:{output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
+                print('dfa_nets line 263, after the scan but before concat')
+                print(f'output_mp_state.pred_trace_o: {output_mp_state.pred_trace_o.shape}; output_mp_state.pred_trace_h_i: {output_mp_state.pred_trace_h_i.shape}')
                 if return_hints:
-                    print(f'in lean_mp_state, lean_mp_state.pred_trace_h_i.shape = {lean_mp_state.pred_trace_h_i.shape}')
-                    print(f'in accum_mp_state, accum_mp_state.pred_trace_h_i.shape = {accum_mp_state.pred_trace_h_i.shape}')
+                    print(f'accum_mp_state.pred_trace_h_i.shape = {accum_mp_state.pred_trace_h_i.shape}')
         # We only return the last algorithm's output. That's because
         # the output only matters when a single algorithm is processed; the case
         # `algorithm_index==-1` (meaning all algorithms should be processed)
@@ -273,7 +274,9 @@ class DFANet(nets.Net):
         accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
-
+        if return_hints:
+            print('dfa_nets line 278, after concat results from all layers')
+            print(f'accum_mp_state.pred_trace_h_i: {accum_mp_state.pred_trace_h_i.shape}')
         if return_all_outputs:
             pred_trace_o = jnp.stack(accum_mp_state.pred_trace_o)
             # print('since return_all_output=True,')
@@ -283,11 +286,6 @@ class DFANet(nets.Net):
             pred_trace_o = output_mp_state.pred_trace_o
         # hint_preds = invert(accum_mp_state.hint_preds)
         pred_trace_h_i = accum_mp_state.pred_trace_h_i
-        if return_hints:
-            print(f'dfa_nets line 283, pred_trace_h_i: {pred_trace_h_i.shape}')
-        # print(f'return_hints is: {return_hints}')
-        # print(f'dfa_nets line 290, pred_trace_o: {pred_trace_o}')
-        # exit(666)
         return pred_trace_o, pred_trace_h_i
 
     def _dfa_msg_passing_step(self,
@@ -310,8 +308,10 @@ class DFANet(nets.Net):
         # print('dfa_nets line 267, in dfa_nets._dfa_msg_passing_step')
         # print(f'i = {i}; repred = {repred}; return_hints = {return_hints}; return_all_outputs = {return_all_outputs}')
         trace_h_i = jax.tree_util.tree_map(lambda x: jnp.asarray(x)[i], trace_h)
+        if first_step:
+            print(f'dfa_nets line 311, this is the first GNN layer. i = {i}')
         if self.decode_hints and not first_step:
-            print('dfa_nets line 350!!')
+            print(f'dfa_nets line 313, this is a GNN layer but not the first layer. i = {i}')
             # exit(666)
             assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
             hard_postprocess = (self._hint_repred_mode == 'hard' or

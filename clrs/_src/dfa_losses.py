@@ -45,7 +45,7 @@ def trace_h_loss(
     verbose_loss = {}
     # length = truth.data.shape[0] - 1
     length = truth.data.shape[0] - 1 if take_hint_as_outpt else truth.data.shape[0] - 2
-    print(f'dfa_loss line 48, hint_len = {length} \nshape of truth is: {truth.data[1:].shape}; shape of preds = {preds.shape}')
+    print(f'dfa_loss line 48, shape of preds = {preds.shape} \nshape of truth is: {truth.data[1:].shape}; shape of preds = {preds.shape}')
     loss, mask = _trace_h_loss(
         # truth_data=truth.data[1:],
         truth_data=truth.data[1:] if take_hint_as_outpt else truth.data[1:-1],
