@@ -33,6 +33,12 @@ def parse_train_params(params_hash: str,
                        ):
     with open(params_filepath) as params_loader:
         params_dict = json.load(params_loader)
+    if 'notice' in params_dict and params_dict['notice']['use_xla_flags']:
+        os.environ['XLA_FLAGS'] = (
+            '--xla_gpu_deterministic_ops=true '
+            '--xla_gpu_autotune_level=0 '
+        )
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
     with open(params_dict['sample_path_processor']['errorlog_savepath']) as errored_sample_ids_loader:
         errored_sample_ids = json.load(errored_sample_ids_loader)
     full_statistics_filepath = params_dict['log']['full_statistics_filepath']
@@ -90,6 +96,8 @@ def parse_train_params(params_hash: str,
     # assert params_dict['train_sample_loader']['expected_trace_len'] > 2, 'Only if expected_trace_len > 2 that GNN can work!'
     if 'just_one_layer' in params_dict['dfa_net'] and params_dict['dfa_net']['just_one_layer']:
         assert params_dict['train_sample_loader']['expected_trace_len'] == 2
+    if 'exclude_trace_loss' in params_dict['dfa_net'] and params_dict['dfa_net']['exclude_trace_loss'] and params_dict['train_sample_loader']['expected_trace_len'] > 2:
+        assert params_dict['dfa_net']['hint_teacher_forcing'] is None, "This training param decides not to use trace supervision, so the teacher forcing got to be canceled!"
     return params_dict
 
 

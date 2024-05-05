@@ -37,6 +37,7 @@ def trace_h_loss(
         truth: _DataPoint,
         preds: _chex_Array,
         lengths: _chex_Array,
+        # in fact is the hint_len stored in feedbacks
         take_hint_as_outpt: bool,
         verbose: bool = False,
 ):
@@ -44,6 +45,7 @@ def trace_h_loss(
     total_loss = 0.
     verbose_loss = {}
     # length = truth.data.shape[0] - 1
+    # can be thought of nb_mp_steps
     length = truth.data.shape[0] - 1 if take_hint_as_outpt else truth.data.shape[0] - 2
     print(f'dfa_loss line 48, shape of preds = {preds.shape} \nshape of truth is: {truth.data[1:].shape}; shape of preds = {preds.shape}')
     loss, mask = _trace_h_loss(

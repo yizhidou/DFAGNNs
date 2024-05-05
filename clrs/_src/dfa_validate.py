@@ -81,7 +81,8 @@ def validate(vali_params_savedir: str,
     del train_params_dict['baseline_model']['checkpoint_path']
     del train_params_dict['dfa_net']['encode_hints']
     del train_params_dict['dfa_net']['decode_hints']
-    if train_params_dict['dfa_net']['just_one_layer'] and vali_params_dict['vali_sample_loader']['expected_trace_len'] == 2:
+    if 'just_one_layer' in train_params_dict['dfa_net'] and train_params_dict['dfa_net']['just_one_layer'] and \
+            vali_params_dict['vali_sample_loader']['expected_trace_len'] == 2:
         train_params_dict['dfa_net']['just_one_layer'] = True
     else:
         train_params_dict['dfa_net']['just_one_layer'] = False

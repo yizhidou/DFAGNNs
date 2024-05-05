@@ -237,6 +237,7 @@ def unsorted_segment_softmax(logits,  # [E, nb_heads]
     probs = exp_logits / broadcast_exp_sum
     return probs
 
+
 class AlignGNN(DFAProcessor):
     def __init__(self,
                  out_size: int,
@@ -290,6 +291,7 @@ class AlignGNN(DFAProcessor):
         # [B, N, m, hidden_dim]
         return updated_bits
 
+
 class GNNV3(DFAProcessor):
     def __init__(self, name: str = 'gnn_v3'):
         super().__init__(name=name)
@@ -338,6 +340,7 @@ class GNNV3(DFAProcessor):
         update_func = hk.Linear(1)
         return update_func(concated_gen_kill_state)  # [B, N, m, 1]
 
+
 class GNNV4_sum(DFAProcessor):
     def __init__(self, name: str = 'gnn_v4'):
         super(GNNV4_sum, self).__init__(name=name)
@@ -368,14 +371,14 @@ class GNNV4_sum(DFAProcessor):
         # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
 
         @jax.vmap
-        def _segment_max_batched(data,  # [E, m, hidden_dim]
+        def _segment_sum_batched(data,  # [E, m, hidden_dim]
                                  segment_ids  # [E, ]
                                  ):
             return jax.ops.segment_sum(data=data,
                                        segment_ids=segment_ids,
                                        num_segments=nb_nodes)
 
-        aggregated_hint = _segment_max_batched(data=hint_sources,
+        aggregated_hint = _segment_sum_batched(data=hint_sources,
                                                segment_ids=edge_indices_target)
         #   [B, N, m, hidden_dim]
         nh_concated = jnp.concatenate([node_fts, aggregated_hint], axis=-1)
@@ -428,6 +431,7 @@ class GNNV4_max(DFAProcessor):
         updated_hidden = update_linear(nh_concated)
         return updated_hidden
 
+
 class GNNV4_min(DFAProcessor):
     def __init__(self, name: str = 'gnn_v4'):
         super(GNNV4_min, self).__init__(name=name)
@@ -473,6 +477,7 @@ class GNNV4_min(DFAProcessor):
         updated_hidden = update_linear(nh_concated)
         return updated_hidden
 
+
 class GNNV6_sum(DFAProcessor):
     def __init__(self, name: str = 'gnn_v6_sum'):
         super(GNNV6_sum, self).__init__(name=name)
@@ -503,14 +508,61 @@ class GNNV6_sum(DFAProcessor):
         # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
 
         @jax.vmap
-        def _segment_max_batched(data,  # [E, m, hidden_dim]
+        def _segment_sum_batched(data,  # [E, m, hidden_dim]
                                  segment_ids  # [E, ]
                                  ):
             return jax.ops.segment_sum(data=data,
                                        segment_ids=segment_ids,
                                        num_segments=nb_nodes)
 
-        aggregated_hint = _segment_max_batched(data=hint_sources,
+        aggregated_hint = _segment_sum_batched(data=hint_sources,
+                                               segment_ids=edge_indices_target)
+        #   [B, N, m, hidden_dim]
+        update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
+        updated_hidden = update_linear(node_fts + aggregated_hint)
+        return updated_hidden
+
+class GNNV6_mean(DFAProcessor):
+    def __init__(self, name: str = 'gnn_v6_mean'):
+        super(GNNV6_mean, self).__init__(name=name)
+
+    def __call__(self, cfg_indices_padded: _chex_Array,  # [B, E, 2],
+                 hint_state: _chex_Array,  # [B, N, m, hidden_dim]
+                 node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+                 edge_fts: _chex_Array,  # [B, E, hidden_dim]
+                 ):
+        # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
+        nb_nodes, hidden_dims = node_fts.shape[1], node_fts.shape[-1]
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        hint_sources = jnp.take_along_axis(arr=hint_state,  # [B, N, m, hidden_dim]
+                                           indices=dfa_utils.dim_expand_to(edge_indices_source, hint_state),
+                                           # [B, 2E, 1, 1]
+                                           axis=1)
+        #   [B, 2E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)  # w: [hidden_dim, 1]; b: [1, ]
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, 2E, hidden_dim] -> [B, 2E, 1]
+
+        hint_sources = jnp.expand_dims(edge_coeff, axis=-1) * hint_sources
+
+        # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_mean_batched(data,  # [E, m, hidden_dim]
+                                  segment_ids  # [E, ]
+                                  ):
+            segment_counts = jax.ops.segment_sum(data=jnp.ones_like(data),
+                                                 segment_ids=segment_ids,
+                                                 num_segments=nb_nodes)
+            segment_sums = jax.ops.segment_sum(data=data,
+                                               segment_ids=segment_ids,
+                                               num_segments=nb_nodes)
+            return segment_sums / segment_counts
+        aggregated_hint = _segment_mean_batched(data=hint_sources,
                                                segment_ids=edge_indices_target)
         #   [B, N, m, hidden_dim]
         update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
@@ -561,6 +613,7 @@ class GNNV6_max(DFAProcessor):
         updated_hidden = update_linear(node_fts + aggregated_hint)
         return updated_hidden
 
+
 class GNNV6_min(DFAProcessor):
     def __init__(self, name: str = 'gnn_v6'):
         super(GNNV6_min, self).__init__(name=name)
@@ -605,6 +658,7 @@ class GNNV6_min(DFAProcessor):
         updated_hidden = update_linear(node_fts + aggregated_hint)
         return updated_hidden
 
+
 class GNNV8_sum(DFAProcessor):
     def __init__(self, name: str = 'gnn_v8_sum'):
         super(GNNV8_sum, self).__init__(name=name)
@@ -624,9 +678,9 @@ class GNNV8_sum(DFAProcessor):
         nh_fused = nh_transform_linear(nh_concated)
 
         nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
-                                           indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
-                                           # [B, 2E, 1, 1]
-                                           axis=1)
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
         #   [B, 2E, m, hidden_dim]
 
         # get coefficient from edge_fts
@@ -647,11 +701,65 @@ class GNNV8_sum(DFAProcessor):
                                        num_segments=nb_nodes)
 
         aggregated_nh = _segment_sum_batched(data=nh_sources,
-                                               segment_ids=edge_indices_target)
+                                             segment_ids=edge_indices_target)
         #   [B, N, m, hidden_dim]
         update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
         updated_hidden = update_linear(aggregated_nh)
         return updated_hidden
+
+
+class GNNV8_mean(DFAProcessor):
+    def __init__(self, name: str = 'gnn_v8_mean'):
+        super(GNNV8_mean, self).__init__(name=name)
+
+    def __call__(self, cfg_indices_padded: _chex_Array,  # [B, E, 2],
+                 hidden: _chex_Array,  # [B, N, m, hidden_dim]
+                 node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+                 edge_fts: _chex_Array,  # [B, E, hidden_dim]
+                 ):
+        # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
+        nb_nodes, hidden_dims = node_fts.shape[1], node_fts.shape[-1]
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        nh_concated = jnp.concatenate([node_fts, hidden], axis=-1)
+        nh_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+
+        nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
+        #   [B, 2E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)  # w: [hidden_dim, 1]; b: [1, ]
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, 2E, hidden_dim] -> [B, 2E, 1]
+
+        nh_sources = jnp.expand_dims(edge_coeff, axis=-1) * nh_sources
+
+        # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_mean_batched(data,  # [E, m, hidden_dim]
+                                  segment_ids  # [E, ]
+                                  ):
+            segment_counts = jax.ops.segment_sum(data=jnp.ones_like(data),
+                                                 segment_ids=segment_ids,
+                                                 num_segments=nb_nodes)
+            segment_sums = jax.ops.segment_sum(data=data,
+                                               segment_ids=segment_ids,
+                                               num_segments=nb_nodes)
+            return segment_sums / segment_counts
+
+        aggregated_nh = _segment_mean_batched(data=nh_sources,
+                                              segment_ids=edge_indices_target)
+        #   [B, N, m, hidden_dim]
+        update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
+        updated_hidden = update_linear(aggregated_nh)
+        return updated_hidden
+
 
 class GNNV8_min(DFAProcessor):
     def __init__(self, name: str = 'gnn_v8_min'):
@@ -672,9 +780,9 @@ class GNNV8_min(DFAProcessor):
         nh_fused = nh_transform_linear(nh_concated)
 
         nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
-                                           indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
-                                           # [B, 2E, 1, 1]
-                                           axis=1)
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
         #   [B, 2E, m, hidden_dim]
 
         # get coefficient from edge_fts
@@ -695,11 +803,12 @@ class GNNV8_min(DFAProcessor):
                                        num_segments=nb_nodes)
 
         aggregated_nh = _segment_min_batched(data=nh_sources,
-                                               segment_ids=edge_indices_target)
+                                             segment_ids=edge_indices_target)
         #   [B, N, m, hidden_dim]
         update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
         updated_hidden = update_linear(aggregated_nh)
         return updated_hidden
+
 
 class GNNV8_max(DFAProcessor):
     def __init__(self, name: str = 'gnn_v8_max'):
@@ -720,9 +829,9 @@ class GNNV8_max(DFAProcessor):
         nh_fused = nh_transform_linear(nh_concated)
 
         nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
-                                           indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
-                                           # [B, 2E, 1, 1]
-                                           axis=1)
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
         #   [B, 2E, m, hidden_dim]
 
         # get coefficient from edge_fts
@@ -743,13 +852,15 @@ class GNNV8_max(DFAProcessor):
                                        num_segments=nb_nodes)
 
         aggregated_nh = _segment_max_batched(data=nh_sources,
-                                               segment_ids=edge_indices_target)
+                                             segment_ids=edge_indices_target)
         #   [B, N, m, hidden_dim]
         update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
         updated_hidden = update_linear(aggregated_nh)
         return updated_hidden
 
+
 DFAProcessorFactory = Callable[[int], DFAProcessor]
+
 
 def get_dfa_processor_factory(kind: str,
                               aggregator: str = 'sum',
@@ -786,6 +897,8 @@ def get_dfa_processor_factory(kind: str,
         elif kind == 'gnn_v6' or kind == 'gnn_v7':
             if aggregator == 'sum':
                 processor = GNNV6_sum()
+            elif aggregator == 'mean':
+                processor = GNNV6_mean()
             elif aggregator == 'max':
                 processor = GNNV6_max()
             elif aggregator == 'min':
@@ -795,6 +908,8 @@ def get_dfa_processor_factory(kind: str,
         elif kind == 'gnn_v8':
             if aggregator == 'sum':
                 processor = GNNV8_sum()
+            elif aggregator == 'mean':
+                processor = GNNV8_mean()
             elif aggregator == 'max':
                 processor = GNNV8_max()
             elif aggregator == 'min':

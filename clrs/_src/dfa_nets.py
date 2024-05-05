@@ -338,7 +338,7 @@ class DFANet(nets.Net):
                                                       location=specs.Location.EDGE if self.dfa_version is None else specs.Location.NODE,
                                                       type_=type_of_trace_h_i,
                                                       data=post_processed_data)
-            if repred:
+            if repred or self._hint_teacher_forcing is None:
                 trace_h_i = decoded_trace_h_i
             elif self._hint_teacher_forcing < 1.0:
                 force_mask = jax.random.bernoulli(

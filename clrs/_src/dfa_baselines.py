@@ -674,7 +674,7 @@ class DFABaselineModel(model.Model):
             trace_h_f1_list = []
             # print(f'dfa_baseline line 598, {trace_h_pred.shape[0]}')
             # exit(666)
-            for time_step in range(trace_h_pred.shape[0]-1):
+            for time_step in range(trace_h_pred.shape[0]):
                 pred_trace_h_i = trace_h_pred[time_step]
                 if type_ == specs.Type.CATEGORICAL:
                     truth_trace_h_i = feedback.features.trace_h.data[time_step+1]
