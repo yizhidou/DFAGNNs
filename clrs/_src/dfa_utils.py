@@ -1,4 +1,4 @@
-from typing import Optional, Union, Dict
+from typing import Optional, Union, List
 import os, json, sys, argparse
 import numpy as np
 from programl.proto import *
@@ -589,32 +589,57 @@ def filter_sample_list(full_statistics_savepath,
                        max_num_pp,
                        min_num_pp,
                        cfg_edges_rate,
-                       sample_id_savepath):
+                       # sample_id_savepath: Union[str, List],
+                       sample_ids: List
+                       ):
     assert min_num_pp < max_num_pp
     with open(full_statistics_savepath) as statistics_loader:
         full_statistics_dict = json.load(statistics_loader)
-
-    sample_id_list = []
-    with open(sample_id_savepath) as sample_ids_loader:
-        for line_number, line in enumerate(sample_ids_loader.readlines()):
-            sample_id = line.strip()
-            # if len(sample_id) < 2:
-            #     continue
-            if sample_id in full_statistics_dict:
-                num_pp, num_cfg = full_statistics_dict[sample_id][:2]
-                if num_pp > max_num_pp or num_pp < min_num_pp:
-                    continue
-                if num_cfg > max_num_pp * cfg_edges_rate:
-                    continue
-            else:
-                # try:
-                assert sample_id in errored_sample_ids
-                # except AssertionError:
-                #     print(f'{sample_id} is neither in statistics nor in errored! its len is: {len(sample_id)}; ln = {line_number}')
-                #     exit(666)
+    filtered_sample_ids = []
+    for sample_id in sample_ids:
+        if sample_id in full_statistics_dict:
+            num_pp, num_cfg = full_statistics_dict[sample_id][:2]
+            if num_pp > max_num_pp or num_pp < min_num_pp:
                 continue
-            sample_id_list.append(sample_id)
-    return sample_id_list
+            if num_cfg > max_num_pp * cfg_edges_rate:
+                continue
+        else:
+            # try:
+            assert sample_id in errored_sample_ids
+            # except AssertionError:
+            #     print(f'{sample_id} is neither in statistics nor in errored! its len is: {len(sample_id)}')
+            #     exit(666)
+            continue
+        filtered_sample_ids.append(sample_id)
+    return filtered_sample_ids
+    # sample_id_list = []
+    # sample_id_savepath_list = []
+    # if isinstance(sample_id_savepath, str):
+    #     sample_id_savepath.startswith(sample_id_savepath)
+    # else:
+    #     assert isinstance(sample_id_savepath, List)
+    #     sample_id_savepath_list = sample_id_savepath[:]
+    # for sample_id_savepath_item in sample_id_savepath_list:
+    #     with open(sample_id_savepath_item) as sample_ids_loader:
+    #         for line_number, line in enumerate(sample_ids_loader.readlines()):
+    #             sample_id = line.strip()
+    #             # if len(sample_id) < 2:
+    #             #     continue
+    #             if sample_id in full_statistics_dict:
+    #                 num_pp, num_cfg = full_statistics_dict[sample_id][:2]
+    #                 if num_pp > max_num_pp or num_pp < min_num_pp:
+    #                     continue
+    #                 if num_cfg > max_num_pp * cfg_edges_rate:
+    #                     continue
+    #             else:
+    #                 # try:
+    #                 assert sample_id in errored_sample_ids
+    #                 # except AssertionError:
+    #                 #     print(f'{sample_id} is neither in statistics nor in errored! its len is: {len(sample_id)}; ln = {line_number}')
+    #                 #     exit(666)
+    #                 continue
+    #             sample_id_list.append(sample_id)
+    # return sample_id_list
 
 
 def parse_params(params_hash: str,

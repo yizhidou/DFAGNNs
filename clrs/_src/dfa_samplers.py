@@ -60,6 +60,14 @@ class DFASampler(samplers.Sampler):
             algo = getattr(algorithms, 'dfa_v2')
             spec = dfa_specs.DFASPECS['dfa_v2']
             assert self.task_name == 'mix'
+        elif self.sample_loader.dfa_version == 3:
+            algo = getattr(algorithms, 'dfa_v3')
+            spec = dfa_specs.DFASPECS['dfa_v3']
+            assert self.task_name == 'mix'
+        elif self.sample_loader.dfa_version == 4:
+            algo = getattr(algorithms, 'dfa_v4')
+            spec = dfa_specs.DFASPECS['dfa_v4']
+            assert self.task_name == 'mix'
         else:
             # assert self.sample_loader.dfa_version is None
             algo = getattr(algorithms, task_name)
@@ -76,6 +84,7 @@ class DFASampler(samplers.Sampler):
         assert self.iterate_all
         print('dfa_sampler line 77, sample_id_list_iter has been reset??')
         self.sample_id_list_iter = iter(self.sample_id_list)
+
     def _sample_data(self, length: Optional[int] = None, *args, **kwargs):
         # sample_id = next(self.sample_id_generator)
         # rand_idx = self._rng.randint(0, len(self.sample_id_list) - 1)
@@ -110,7 +119,7 @@ class DFASampler(samplers.Sampler):
         hint_dp_list_list = []  # trace_h
         edge_indices_dict_list = []
         mask_dict_list = []
-        if self.sample_loader.dfa_version == 2:
+        if self.sample_loader.dfa_version == 2 or self.sample_loader.dfa_version == 3 or self.sample_loader.dfa_version == 4:
             if self.sample_loader.balance_sample_task:
                 task_idx = self._rng.randint(4)
             else:
@@ -177,7 +186,7 @@ class DFASampler(samplers.Sampler):
         # print('in batched_mask_dict:')
         # for key, value in batched_mask_dict.items():
         #     print(f'{key}: {value}')
-        if self.sample_loader.dfa_version == 2:
+        if self.sample_loader.dfa_version == 2 or self.sample_loader.dfa_version == 3 or self.sample_loader.dfa_version == 4:
             return task_name_for_this_batch, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
         else:
             return None, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h
@@ -207,14 +216,15 @@ class DFASampler(samplers.Sampler):
         # print(f'sampler line 116, the type of tmp is: {type(tmp)}; its len is: {len(tmp)}')
         task_name_for_this_batch, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = tmp
         return task_name_for_this_batch, Feedback(features=Features(input_dp_list=batched_inp_dp_list,
-                                                                        trace_h=batched_trace_h,
-                                                                        padded_edge_indices_dict=batched_edge_indices_dict,
-                                                                        mask_dict=batched_mask_dict),
-                                                      trace_o=batched_trace_o)
+                                                                    trace_h=batched_trace_h,
+                                                                    padded_edge_indices_dict=batched_edge_indices_dict,
+                                                                    mask_dict=batched_mask_dict),
+                                                  trace_o=batched_trace_o)
+
     def _make_batch_all_tasks(self, num_samples: int,
-                    spec: Spec,
-                    algorithm: samplers.Algorithm,
-                    *args, **kwargs):
+                              spec: Spec,
+                              algorithm: samplers.Algorithm,
+                              *args, **kwargs):
         liveness_result, reachability_result, dominance_result = None, None, None
         task_names_list = ['liveness', 'reachability', 'dominance']
         inp_dp_list_list = [[], [], []]  # pos, if_pp, if_ip, cfg, gen, (kill,) trace_i
@@ -230,10 +240,12 @@ class DFASampler(samplers.Sampler):
             for task_idx, task_name_for_this_batch in enumerate(task_names_list):
                 try:
                     # print(f'dfa_sampler line 231, {task_name_for_this_batch} is on going...')
-                    edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id, task_name_for_this_batch)
+                    edge_indices_dict, mask_dict, probes = algorithm(self.sample_loader, sample_id,
+                                                                     task_name_for_this_batch)
                 except probing.ProbeError as err:
                     if isinstance(err, dfa_utils.DFAException):
-                        print(f'{sample_id} errored!!! for task {task_name_for_this_batch}. error_code: {err.error_code} (dfa_sampler line 98)')
+                        print(
+                            f'{sample_id} errored!!! for task {task_name_for_this_batch}. error_code: {err.error_code} (dfa_sampler line 98)')
                         continue
                     else:
                         print(err)
@@ -256,9 +268,12 @@ class DFASampler(samplers.Sampler):
             batched_inp_dp_list = _batch_ioh(inp_dp_list_list[task_idx])
             batched_trace_o = _batch_ioh(outp_dp_list_list[task_idx])[0]
             batched_trace_h = _batch_ioh(hint_dp_list_list[task_idx])[0]
-            batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x), *edge_indices_dict_list[task_idx])
+            batched_edge_indices_dict = jax.tree_util.tree_map(lambda *x: np.stack(x),
+                                                               *edge_indices_dict_list[task_idx])
             batched_mask_dict = jax.tree_util.tree_map(lambda *x: np.array(x), *mask_dict_list[task_idx])
-            result_of_this_task = (task_name, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h)
+            result_of_this_task = (
+            task_name, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o,
+            batched_trace_h)
             if task_name == 'liveness':
                 liveness_result = result_of_this_task
             elif task_name == 'reachability':
@@ -293,11 +308,12 @@ class DFASampler(samplers.Sampler):
             if result is None:
                 continue
             task_name_for_this_batch, batched_edge_indices_dict, batched_mask_dict, batched_inp_dp_list, batched_trace_o, batched_trace_h = result
-            batch = (sample_ids_this_batch, task_name_for_this_batch, Feedback(features=Features(input_dp_list=batched_inp_dp_list,
-                                                                        trace_h=batched_trace_h,
-                                                                        padded_edge_indices_dict=batched_edge_indices_dict,
-                                                                        mask_dict=batched_mask_dict),
-                                                      trace_o=batched_trace_o))
+            batch = (sample_ids_this_batch, task_name_for_this_batch,
+                     Feedback(features=Features(input_dp_list=batched_inp_dp_list,
+                                                trace_h=batched_trace_h,
+                                                padded_edge_indices_dict=batched_edge_indices_dict,
+                                                mask_dict=batched_mask_dict),
+                              trace_o=batched_trace_o))
             if task_name_for_this_batch == 'liveness':
                 liveness_batch = batch
             elif task_name_for_this_batch == 'reachability':
@@ -306,6 +322,8 @@ class DFASampler(samplers.Sampler):
                 dominance_batch = batch
 
         return liveness_batch, reachability_batch, dominance_batch
+
+
 def _batch_ioh(ioh_dp_list_list: Trajectories) -> Trajectory:
     assert ioh_dp_list_list
     for sample_idx, dp_list_one_sample in enumerate(ioh_dp_list_list):
@@ -350,8 +368,9 @@ def FeedbackGenerator(dfa_sampler: DFASampler,
     while True:
         yield dfa_sampler.next(batch_size=batch_size)
 
+
 def FeedbackGenerator_all_tasks(dfa_sampler: DFASampler,
-                              batch_size: int):
+                                batch_size: int):
     while True:
         liveness_batch, reachability_batch, dominance_batch = dfa_sampler.next_all_tasks(batch_size=batch_size)
         yield liveness_batch

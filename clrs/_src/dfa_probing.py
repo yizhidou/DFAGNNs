@@ -235,6 +235,7 @@ def finalize_for_dfa_v1(probes: _ProbesDict,
                         expected_nb_nodes: int,
                         expected_nb_cfg_edges: int,
                         expected_hint_len: int,
+                        num_ip: int,
                         full_trace_len: int):
     """Finalizes a `ProbesDict` by stacking/squeezing `data` field."""
     padding_node_idx = expected_nb_nodes - 1
@@ -273,19 +274,41 @@ def finalize_for_dfa_v1(probes: _ProbesDict,
                     old_data = probes[stage][loc][name]['data'][0]
                     # if name in ['direction', 'may_or_must']:
                     if name == 'direction':
-                        direction_data = np.zeros((expected_nb_cfg_edges, 2))
-                        direction_data[:, old_data] = 1
+                        if loc == _Location.EDGE:
+                            direction_data = np.zeros((expected_nb_cfg_edges, 2))
+                            direction_data[:, old_data] = 1
+                            # [E, 2]
+                        else:
+                            assert loc == _Location.NODE
+                            direction_data = np.zeros((num_ip, 2))
+                            direction_data[:, old_data] = 1
+                            # [m, 2]
+                            direction_data = np.expand_dims(direction_data, axis=0)
+                            # [1, m ,2]
+                            direction_data = np.repeat(direction_data, axis=0, repeats=expected_nb_nodes)
+                            # [N, m, 2]
                         probes[stage][loc][name]['data'] = direction_data
                     elif name == 'may_or_must':
-                        # mm_data = np.zeros((expected_nb_nodes, 2))
-                        # mm_data[:, old_data] = 1
-                        mm_data = np.expand_dims(old_data, axis=0)
-                        #   [1, m, 2]
-                        probes[stage][loc][name]['data'] = np.repeat(mm_data, axis=0, repeats=expected_nb_nodes)
-                        #   [N, m, 2]
+                        if loc == _Location.NODE:
+                            mm_data = np.zeros((num_ip, 2))
+                            mm_data[:, old_data] = 1
+                            # [m, 2]
+                            mm_data = np.expand_dims(mm_data, axis=0)
+                            #   [1, m, 2]
+                            mm_data = np.repeat(mm_data, axis=0, repeats=expected_nb_nodes)
+                            #   [N, m, 2]
+                            # print(f'dfa_probing line 300, mm_data: {mm_data.shape}')
+                        else:
+                            assert loc == _Location.EDGE
+                            mm_data = np.zeros((expected_nb_cfg_edges, 2))
+                            # [E, 2]
+                            mm_data[:, old_data] = 1
+                            # [E, 2]
+                        probes[stage][loc][name]['data'] = mm_data
                     elif name == 'cfg_edges':
                         # add self-loops to every node
-                        self_loops_indices = np.expand_dims(np.arange(expected_nb_nodes), axis=-1) * np.ones((expected_nb_nodes, 2), dtype=int)
+                        self_loops_indices = np.expand_dims(np.arange(expected_nb_nodes), axis=-1) * np.ones(
+                            (expected_nb_nodes, 2), dtype=int)
                         # [N, 2]
                         nb_cfg_edges = old_data.shape[0] + expected_nb_nodes
                         cfg_indices_padding = padding_node_idx * np.ones((expected_nb_cfg_edges - nb_cfg_edges, 2),
@@ -328,7 +351,7 @@ def finalize_for_dfa_v1(probes: _ProbesDict,
                         probes[stage][loc][name]['data'] = np.concatenate([old_data, data_padding],
                                                                           axis=0)
 
-                        #[N, nb_ip, 2]
+                        # [N, nb_ip, 2]
                     # print('new_dfa_probing line 205, {}: {}'.format(name, probes[stage][loc][name]['data'].shape))
     padded_trace_o = probes[_Stage.OUTPUT][_Location.NODE]['trace_o']['data']
     # [N, nb_ip, 2]
@@ -356,6 +379,48 @@ def finalize_for_dfa_v1(probes: _ProbesDict,
     # print(f'gen_vectors: {tmp.shape} \n{tmp}')
     # print(f'nb_nodes: {nb_nodes}; nb_cfg_edges: {nb_cfg_edges}; hint_len: {hint_len}')
     return edge_indices_dict, mask_dict
+
+
+def finalize_for_dfa_v2(probes: _ProbesDict,
+                        expected_nb_nodes: int,
+                        expected_nb_cfg_edges: int,
+                        expected_hint_len: int,
+                        num_ip: int,
+                        full_trace_len: int):
+    return finalize_for_dfa_v1(probes,
+                               expected_nb_nodes,
+                               expected_nb_cfg_edges,
+                               expected_hint_len,
+                               num_ip,
+                               full_trace_len)
+
+
+def finalize_for_dfa_v3(probes: _ProbesDict,
+                        expected_nb_nodes: int,
+                        expected_nb_cfg_edges: int,
+                        expected_hint_len: int,
+                        num_ip: int,
+                        full_trace_len: int):
+    return finalize_for_dfa_v1(probes,
+                               expected_nb_nodes,
+                               expected_nb_cfg_edges,
+                               expected_hint_len,
+                               num_ip,
+                               full_trace_len)
+
+
+def finalize_for_dfa_v4(probes: _ProbesDict,
+                        expected_nb_nodes: int,
+                        expected_nb_cfg_edges: int,
+                        expected_hint_len: int,
+                        num_ip: int,
+                        full_trace_len: int):
+    return finalize_for_dfa_v1(probes,
+                               expected_nb_nodes,
+                               expected_nb_cfg_edges,
+                               expected_hint_len,
+                               num_ip,
+                               full_trace_len)
 
 
 def array_cat(A, num_cat):

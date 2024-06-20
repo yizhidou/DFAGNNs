@@ -1,5 +1,5 @@
 import json
-
+from typing import List
 import jax
 import argparse
 # import hashlib
@@ -57,13 +57,26 @@ def validate(vali_params_savedir: str,
     vali_sample_loader = dfa_utils.SampleLoader(sample_path_processor=sample_path_processor,
                                                 seed=rng.randint(2 ** 32),
                                                 **vali_params_dict['vali_sample_loader'])
+    candi_sample_id_list = []
+    if isinstance(vali_params_dict['vali_filepath']['vali_sample_id_savepath'], List):
+        for vali_sample_id_savepath in vali_params_dict['vali_filepath']['vali_sample_id_savepath']:
+            with open(vali_sample_id_savepath) as sample_ids_loader:
+                for line in sample_ids_loader.readlines():
+                    sample_id = line.strip()
+                    candi_sample_id_list.append(sample_id)
+    else:
+        assert isinstance(vali_params_dict['vali_filepath']['vali_sample_id_savepath'], str)
+        with open(vali_params_dict['vali_filepath']['vali_sample_id_savepath']) as sample_ids_loader:
+            for line in sample_ids_loader.readlines():
+                sample_id = line.strip()
+                candi_sample_id_list.append(sample_id)
     filtered_vali_sample_ids = dfa_utils.filter_sample_list(
         full_statistics_savepath=vali_params_dict['vali_filepath']['full_statistics_savepath'],
         errored_sample_ids=sample_path_processor.errored_sample_ids,
         max_num_pp=vali_params_dict['vali_sample_loader']['max_num_pp'],
         min_num_pp=vali_params_dict['vali_sample_loader']['min_num_pp'],
         cfg_edges_rate=vali_params_dict['vali_sample_loader']['cfg_edges_rate'],
-        sample_id_savepath=vali_params_dict['vali_filepath']['vali_sample_id_savepath'])
+        sample_ids=candi_sample_id_list)
     iterate_entire_dataset = True if vali_params_dict['num_steps_per_ckpt'] < 0 else False
     vali_sampler = dfa_samplers.DFASampler(task_name=train_params_dict['task']['task_name'],
                                            sample_id_list=filtered_vali_sample_ids,

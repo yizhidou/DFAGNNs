@@ -3,6 +3,7 @@ import argparse
 import json
 import numpy as np
 import os
+from typing import List
 from clrs._src import dfa_samplers
 from clrs._src import dfa_utils
 from clrs._src import dfa_processors
@@ -42,13 +43,26 @@ def parse_train_params(params_hash: str,
     with open(params_dict['sample_path_processor']['errorlog_savepath']) as errored_sample_ids_loader:
         errored_sample_ids = json.load(errored_sample_ids_loader)
     full_statistics_filepath = params_dict['log']['full_statistics_filepath']
+    candi_sample_id_list = []
+    if isinstance(params_dict['dfa_sampler']['train_sample_id_savepath'], List):
+        for vali_sample_id_savepath in params_dict['dfa_sampler']['train_sample_id_savepath']:
+            with open(vali_sample_id_savepath) as sample_ids_loader:
+                for line in sample_ids_loader.readlines():
+                    sample_id = line.strip()
+                    candi_sample_id_list.append(sample_id)
+    else:
+        assert isinstance(params_dict['dfa_sampler']['train_sample_id_savepath'], str)
+        with open(params_dict['dfa_sampler']['train_sample_id_savepath']) as sample_ids_loader:
+            for line in sample_ids_loader.readlines():
+                sample_id = line.strip()
+                candi_sample_id_list.append(sample_id)
     params_dict['dfa_sampler']['train_sample_id_list'] = dfa_utils.filter_sample_list(
         full_statistics_savepath=full_statistics_filepath,
         errored_sample_ids=errored_sample_ids,
         max_num_pp=params_dict['train_sample_loader']['max_num_pp'],
         min_num_pp=params_dict['train_sample_loader']['min_num_pp'],
         cfg_edges_rate=params_dict['train_sample_loader']['cfg_edges_rate'],
-        sample_id_savepath=params_dict['dfa_sampler']['train_sample_id_savepath'])
+        sample_ids=candi_sample_id_list)
     del params_dict['dfa_sampler']['train_sample_id_savepath']
     if params_dict['train_sample_loader']['dfa_version'] == 0:
         # params_dict['vali_sample_loader']['dfa_version'] = 0
@@ -62,6 +76,14 @@ def parse_train_params(params_hash: str,
         # params_dict['vali_sample_loader']['dfa_version'] = 2
         params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v2']]
         params_dict['dfa_net']['dfa_version'] = 2
+    elif params_dict['train_sample_loader']['dfa_version'] == 3:
+        # params_dict['vali_sample_loader']['dfa_version'] = 2
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v3']]
+        params_dict['dfa_net']['dfa_version'] = 3
+    elif params_dict['train_sample_loader']['dfa_version'] == 4:
+        # params_dict['vali_sample_loader']['dfa_version'] = 2
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v4']]
+        params_dict['dfa_net']['dfa_version'] = 4
     else:
         assert params_dict['train_sample_loader']['dfa_version'] is None
         params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
@@ -86,7 +108,7 @@ def parse_train_params(params_hash: str,
         assert params_dict['dfa_net']['dfa_version'] == 2
         version_of_DFANet = 7
     elif params_dict['processor']['kind'] == 'gnn_v8':
-        assert params_dict['dfa_net']['dfa_version'] == 2
+        assert params_dict['dfa_net']['dfa_version'] == 2 or params_dict['dfa_net']['dfa_version'] == 3
         version_of_DFANet = 8
     else:
         print('unrecognized version of GNN_kind!')
@@ -292,7 +314,7 @@ def train(params_savedir, params_filename,
             batch_train_loss = dfa_baseline_model.feedback(rng_key=new_rng_key,
                                                             feedback=train_feedback_batch)
             new_rng_key, rng_key = jax.random.split(rng_key)
-            mean_trace_f1, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
+            mean_trace_f1, precision_last_step, recall_last_step, f1_last_step, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=train_feedback_batch,
                 return_hints=True,

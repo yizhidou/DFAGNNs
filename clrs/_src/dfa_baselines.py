@@ -674,26 +674,29 @@ class DFABaselineModel(model.Model):
             trace_h_f1_list = []
             # print(f'dfa_baseline line 598, {trace_h_pred.shape[0]}')
             # exit(666)
+            # print(f'dfa_baseline line 677, the len of trace_h_pred = {trace_h_pred.shape[0]}')
+            precision_last_step, recall_last_step, f1_last_step = None, None, None
             for time_step in range(trace_h_pred.shape[0]):
                 pred_trace_h_i = trace_h_pred[time_step]
                 if type_ == specs.Type.CATEGORICAL:
                     truth_trace_h_i = feedback.features.trace_h.data[time_step+1]
                 else:
                     truth_trace_h_i = feedback.features.trace_h.data[time_step+1]
-                precision_of_this_step, recall_of_this_step, f_1_of_this_step = self._calculate_measures(type=type_,
+                precision_last_step, recall_last_step, f1_last_step = self._calculate_measures(type=type_,
                                                                                                          mask=mask,
                                                                                                          truth_data=truth_trace_h_i,
                                                                                                          pred_data=pred_trace_h_i)
-                trace_h_f1_list.append(float(f_1_of_this_step))
+                trace_h_f1_list.append(float(f1_last_step))
             if print_full_trace_h_f1_list:
                 print('dfa_baselines line 586, trace_h_f1_list is:')
                 print(trace_h_f1_list)
             precision, recall, f_1 = self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)
             if len(trace_h_f1_list) == 0:
                 mean_trace_h_f1 = f_1
+                precision_last_step, recall_last_step, f1_last_step = precision, recall, f_1
             else:
                 mean_trace_h_f1 = sum(trace_h_f1_list) / float(len(trace_h_f1_list))
-            return mean_trace_h_f1, precision, recall, f_1
+            return mean_trace_h_f1, precision_last_step, recall_last_step, f1_last_step, precision, recall, f_1
 
         # truth_trace_o = jnp.argmax(feedback.trace_o.data[mask], -1) if type_ == specs.Type.CATEGORICAL else feedback.trace_o.data[mask]
         precision, recall, f_1 = self._calculate_measures(type=type_, mask=mask, truth_data=feedback.trace_o.data, pred_data=trace_o_pred)

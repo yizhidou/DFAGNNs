@@ -868,6 +868,7 @@ class DFANet_v8(DFANet):
             if dp.location == specs.Location.EDGE:
                 cfg_edge_fts = encoders.accum_edge_fts(encoder, dp, cfg_edge_fts)
             if dp.location == specs.Location.NODE:
+                print(f'dfa_nets line 871, name: {dp.name}')
                 node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
 
         nxt_hidden = self.processor(

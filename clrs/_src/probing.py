@@ -162,7 +162,7 @@ def split_stages(
 
     for name in spec:
         stage, loc, t = spec[name]
-
+        # print(f'probing line 165, name = {name}; stage = {stage}; loc = {loc}; t = {t}')
         if stage not in probes:
             raise ProbeError(f'Missing stage {stage}.')
         if loc not in probes[stage]:
@@ -188,6 +188,8 @@ def split_stages(
             # pytype: enable=attribute-error
             if t in [_Type.MASK_ONE, _Type.CATEGORICAL
                      ] and not np.all(np.sum(np.abs(data), -1) == 1):
+                # print(data)
+                # print(f'probing line 192, data.shape: {data.shape}')
                 raise ProbeError(f'Expected one-hot `data` for probe "{name}"')
 
         dim_to_expand = 1 if stage == _Stage.HINT else 0
