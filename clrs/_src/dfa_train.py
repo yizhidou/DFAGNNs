@@ -314,11 +314,15 @@ def train(params_savedir, params_filename,
             batch_train_loss = dfa_baseline_model.feedback(rng_key=new_rng_key,
                                                             feedback=train_feedback_batch)
             new_rng_key, rng_key = jax.random.split(rng_key)
-            mean_trace_f1, precision_last_step, recall_last_step, f1_last_step, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
+            trace_h_precision_list, trace_h_recall_list, trace_h_f1_list, train_precision, train_recall, train_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=train_feedback_batch,
                 return_hints=True,
                 print_full_trace_h_f1_list=not if_log)
+            if len(trace_h_f1_list) == 0:
+                mean_trace_f1 = train_f1
+            else:
+                mean_trace_f1 = sum(trace_h_f1_list) / float(len(trace_h_f1_list))
             # new_log_str = f'train epoch_{epoch_idx}_batch_{int(train_batch_idx)} ({task_name_for_this_batch}): loss = {batch_train_loss}; precision = {train_precision}; recall = {train_recall}; F1 = {train_f1}\n'
             # full_trace_len_this_batch = train_feedback_batch.features.mask_dict['full_trace_len']
             # print(f'full_trace_len = {full_trace_len_this_batch}. (dfa_train line 286)')

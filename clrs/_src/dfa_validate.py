@@ -170,59 +170,72 @@ def validate(vali_params_savedir: str,
                 sampled_ids_this_batch, task_name_this_batch, vali_feedback_batch = next(vali_feedback_generator)
             cur_sampled_id = sampled_ids_this_batch[0]
             if not cur_sampled_id == sampled_id_remain:
-                new_log_str = f'\ntest with ckpt_{ckpt_idx}_batch_{int(vali_batch_idx)} {cur_sampled_id}: '
-                print(new_log_str)
+                new_log_str = f'\ntest with ckpt_{ckpt_idx}_batch_{int(vali_batch_idx)} {cur_sampled_id}:\n'
+                print(new_log_str, end='')
                 log_str += new_log_str
                 sampled_id_remain = cur_sampled_id
                 vali_batch_idx += 1
                 liveness_done, reachability_done, dominance_done = False, False, False
             new_rng_key, rng_key = jax.random.split(rng_key)
-            mean_trace_f1, vali_precision, vali_recall, vali_f1 = dfa_baseline_model.get_measures(
+            trace_h_precision_list, trace_h_recall_list, trace_h_f1_list, vali_precision, vali_recall, vali_f1 = dfa_baseline_model.get_measures(
                 rng_key=new_rng_key,
                 feedback=vali_feedback_batch,
                 return_hints=True,
                 print_full_trace_h_f1_list=not if_log)
             full_trace_len_this_batch = vali_feedback_batch.features.mask_dict['full_trace_len']
-            print(f'full_trace_len = {full_trace_len_this_batch}. (dfa_vali line 163)')
+            # print(f'full_trace_len = {full_trace_len_this_batch}. (dfa_vali line 163)')
             # exit(666)
-            new_log_str = f'{task_name_this_batch}: mean_t_f1 = {mean_trace_f1:.4f}; p = {vali_precision:.4f}; r = {vali_recall:.4f}; f1 = {vali_f1:.4f}. '
-            print(new_log_str)
+            # new_log_str = f'{task_name_this_batch}: mean_t_f1 = {mean_trace_f1:.4f}; p = {vali_precision:.4f}; r = {vali_recall:.4f}; f1 = {vali_f1:.4f}. '
+            new_log_str = f'{task_name_this_batch}: {full_trace_len_this_batch}\n'
+            print(new_log_str, end='')
             log_str += new_log_str
-            if task_name_this_batch == 'liveness':
-                liveness_vali_trace_f1_accum += mean_trace_f1
-                liveness_vali_precision_accum += vali_precision
-                liveness_vali_recall_accum += vali_recall
-                liveness_vali_f1_accum += vali_f1
-                num_vali_batch_liveness += 1
-                liveness_done = True
-            elif task_name_this_batch == 'reachability':
-                reachability_vali_trace_f1_accum += mean_trace_f1
-                reachability_vali_precision_accum += vali_precision
-                reachability_vali_recall_accum += vali_recall
-                reachability_vali_f1_accum += vali_f1
-                num_vali_batch_reachability += 1
-                reachability_done = True
-            elif task_name_this_batch == 'dominance':
-                dominance_vali_trace_f1_accum += mean_trace_f1
-                dominance_vali_precision_accum += vali_precision
-                dominance_vali_recall_accum += vali_recall
-                dominance_vali_f1_accum += vali_f1
-                num_vali_batch_dominance += 1
-                dominance_done = True
-            else:
-                print('dfa_train line 150, unrecognized task_name!!')
-                assert False
+            new_log_str = f'p = {vali_precision:.4f}; r = {vali_recall:.4f}; f1 = {vali_f1:.4f}\n'
+            print(new_log_str, end='')
+            log_str += new_log_str
+            new_log_str = 'p_list:\n' + ', '.join('{:.4f}'.format(p) for p in trace_h_precision_list) + '\n'
+            print(new_log_str, end='')
+            log_str += new_log_str
+            new_log_str = 'r_list:\n' + ', '.join('{:.4f}'.format(r) for r in trace_h_recall_list) + '\n'
+            print(new_log_str, end='')
+            log_str += new_log_str
+            new_log_str = 'f1_list:\n' + ', '.join('{:.4f}'.format(f) for f in trace_h_f1_list) + '\n'
+            print(new_log_str, end='')
+            log_str += new_log_str
+            # if task_name_this_batch == 'liveness':
+            #     liveness_vali_trace_f1_accum += mean_trace_f1
+            #     liveness_vali_precision_accum += vali_precision
+            #     liveness_vali_recall_accum += vali_recall
+            #     liveness_vali_f1_accum += vali_f1
+            #     num_vali_batch_liveness += 1
+            #     liveness_done = True
+            # elif task_name_this_batch == 'reachability':
+            #     reachability_vali_trace_f1_accum += mean_trace_f1
+            #     reachability_vali_precision_accum += vali_precision
+            #     reachability_vali_recall_accum += vali_recall
+            #     reachability_vali_f1_accum += vali_f1
+            #     num_vali_batch_reachability += 1
+            #     reachability_done = True
+            # elif task_name_this_batch == 'dominance':
+            #     dominance_vali_trace_f1_accum += mean_trace_f1
+            #     dominance_vali_precision_accum += vali_precision
+            #     dominance_vali_recall_accum += vali_recall
+            #     dominance_vali_f1_accum += vali_f1
+            #     num_vali_batch_dominance += 1
+            #     dominance_done = True
+            # else:
+            #     print('dfa_train line 150, unrecognized task_name!!')
+            #     assert False
             if if_log and vali_batch_idx % 500 == 0:
                 with open(vali_log_savepath, 'a') as log_recorder:
                     log_recorder.write(log_str)
                 del log_str
                 log_str = ''
-        liveness_log_str = f'\n vali on ckpt_{ckpt_idx}: {int(num_vali_batch_liveness)} liveness batches; mean_t_f1 = {(liveness_vali_trace_f1_accum / num_vali_batch_liveness):.4f}; p = {(liveness_vali_precision_accum / num_vali_batch_liveness):.4f}; r = {(liveness_vali_recall_accum / num_vali_batch_liveness):.4f}; F1 = {(liveness_vali_f1_accum / num_vali_batch_liveness):.4f}\n'
-        dominance_log_str = f'vali on ckpt_{ckpt_idx}: {int(num_vali_batch_dominance)} dominance batches; mean_t_f1 = {(dominance_vali_trace_f1_accum / num_vali_batch_dominance):.4f}; p = {(dominance_vali_precision_accum / num_vali_batch_dominance):.4f}; r = {(dominance_vali_recall_accum / num_vali_batch_dominance):.4f}; F1 = {(dominance_vali_f1_accum / num_vali_batch_dominance):.4f}\n'
-        reachability_log_str = f'vali on ckpt_{ckpt_idx}: {int(num_vali_batch_reachability)} reachability batches; mean_t_f1 = {(reachability_vali_trace_f1_accum / num_vali_batch_reachability):.4f}; p = {(reachability_vali_precision_accum / num_vali_batch_reachability):.4f}; r = {(reachability_vali_recall_accum / num_vali_batch_reachability):.4f}; F1 = {(reachability_vali_f1_accum / num_vali_batch_reachability):.4f}\n'
-        new_log_str = liveness_log_str + reachability_log_str + dominance_log_str
-        print(new_log_str, end='')
-        log_str += new_log_str
+        # liveness_log_str = f'\n vali on ckpt_{ckpt_idx}: {int(num_vali_batch_liveness)} liveness batches; mean_t_f1 = {(liveness_vali_trace_f1_accum / num_vali_batch_liveness):.4f}; p = {(liveness_vali_precision_accum / num_vali_batch_liveness):.4f}; r = {(liveness_vali_recall_accum / num_vali_batch_liveness):.4f}; F1 = {(liveness_vali_f1_accum / num_vali_batch_liveness):.4f}\n'
+        # dominance_log_str = f'vali on ckpt_{ckpt_idx}: {int(num_vali_batch_dominance)} dominance batches; mean_t_f1 = {(dominance_vali_trace_f1_accum / num_vali_batch_dominance):.4f}; p = {(dominance_vali_precision_accum / num_vali_batch_dominance):.4f}; r = {(dominance_vali_recall_accum / num_vali_batch_dominance):.4f}; F1 = {(dominance_vali_f1_accum / num_vali_batch_dominance):.4f}\n'
+        # reachability_log_str = f'vali on ckpt_{ckpt_idx}: {int(num_vali_batch_reachability)} reachability batches; mean_t_f1 = {(reachability_vali_trace_f1_accum / num_vali_batch_reachability):.4f}; p = {(reachability_vali_precision_accum / num_vali_batch_reachability):.4f}; r = {(reachability_vali_recall_accum / num_vali_batch_reachability):.4f}; F1 = {(reachability_vali_f1_accum / num_vali_batch_reachability):.4f}\n'
+        # new_log_str = liveness_log_str + reachability_log_str + dominance_log_str
+        # print(new_log_str, end='')
+        # log_str += new_log_str
         if if_log:
             with open(vali_log_savepath, 'a') as log_recorder:
                 log_recorder.write(log_str)
