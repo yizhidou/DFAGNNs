@@ -250,20 +250,21 @@ def validate(vali_params_savedir: str,
 
 
 if __name__ == "__main__":
+    poj104_params_savedir = '/data_hdd/lx20/yzd_workspace/Params/ValiParams/poj104_ValiParams'
     parser = argparse.ArgumentParser(description='Please input the params filename')
+    parser.add_argument('--params_savedir', type=str, required=False, default=poj104_params_savedir)
     parser.add_argument('--params', type=str, required=True)
     parser.add_argument('--ckpt_idx', type=int, nargs="+", default=None, required=False)
     parser.add_argument('--ckpt_step', type=int, default=None)
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--unlog', action='store_true')
     args = parser.parse_args()
-    params_savedir = '/data_hdd/lx20/yzd_workspace/Params/ValiParams/poj104_ValiParams'
     # statistics_filepath = '/data_hdd/lx20/yzd_workspace/Datasets/Statistics/poj104_Statistics/poj104_num_pp_statistics.json'
-    if not os.path.isfile(os.path.join(params_savedir, args.params)):
+    if not os.path.isfile(os.path.join(args.params_savedir, args.params)):
         print('the specified params does not exist!')
         exit(176)
     # params_filename = 'params_not_hint_as_outpt.json'
-    validate(vali_params_savedir=params_savedir,
+    validate(vali_params_savedir=args.params_savedir,
              vali_params_filename=args.params,
              ckpt_idx_list=args.ckpt_idx,
              ckpt_step=args.ckpt_step,

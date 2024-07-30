@@ -68,6 +68,7 @@ class DFABaselineModel(model.Model):
             take_hint_as_outpt: bool,
             use_lstm: bool,
             dropout_prob: float,
+            exclude_trace_loss: bool,
             hint_teacher_forcing: float,
             hint_repred_mode: str,
             learning_rate: float,
@@ -78,7 +79,6 @@ class DFABaselineModel(model.Model):
             dfa_version: Union[None, int],
             just_one_layer: bool = False,
             exclude_output_loss: bool = False,
-            exclude_trace_loss: bool = False,
             encoder_init: str = 'default',
             name: str = 'dfa_base_model'):
         """Constructor for BaselineModel.

@@ -14,14 +14,20 @@ def count_filtered_samples(full_statistics_filepath: str,
     with open(full_statistics_filepath) as statistics_loader:
         full_statistics_dict = json.load(statistics_loader)
     candi_sample_ids = full_statistics_dict.keys()
-    del full_statistics_dict
+    # def full_statistics_dict
     filtered_samples = dfa_utils.filter_sample_list(full_statistics_savepath=full_statistics_filepath,
                                                     errored_sample_ids=errored_sample_ids,
                                                     max_num_pp=max_num_pp,
                                                     min_num_pp=min_num_pp,
                                                     cfg_edges_rate=cfg_edges_rate,
                                                     sample_ids=candi_sample_ids if sample_ids is None else sample_ids)
-    print(f'there are {len(filtered_samples)} in total!')
+    min_trace_len = 999999 
+    max_trace_len = 0
+    for sample in filtered_samples:
+        trace_len_1, trace_len_2, trace_len_3 = full_statistics_dict[sample][-3:] 
+        min_trace_len = min(min_trace_len, trace_len_1, trace_len_2, trace_len_3)
+        max_trace_len = max(max_trace_len, trace_len_1, trace_len_2, trace_len_3)
+    print(f'there are {len(filtered_samples)} in total! min_trace_len = {min_trace_len}; max_trace_len = {max_trace_len}')
 
 
 if __name__ == '__main__':

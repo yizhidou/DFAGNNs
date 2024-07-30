@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import jax.ops
 
 import abc
+import math
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 from clrs._src import dfa_utils
@@ -868,12 +869,23 @@ class GNNV9_max(DFAProcessor):
                  edge_fts: _chex_Array,  # [B, E, hidden_dim]
                  ):
         # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
-        nb_nodes, hidden_dims = node_fts.shape[1], node_fts.shape[-1]
+        _, nb_nodes, nb_ip, hidden_dims = node_fts.shape
         edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
         edge_indices_target = cfg_indices_padded[..., 1]
 
         nh_concated = jnp.concatenate([node_fts, hidden], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
         nh_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+        # [B, N, m, hidden_dim]
+
+        # cancel the independence requirement
+        tmp = jnp.mean(nh_fused, axis=-2, keepdims=True)
+        # [B, N, 1, hidden_dim]
+        tmp = jnp.broadcast_to(tmp, shape=tmp.shape[:2]+(nb_ip,)+(tmp.shape[-1],))
+        nh_fused = jnp.concatenate([nh_fused, tmp], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        tmp_transform_linear = hk.Linear(hidden_dims)
         nh_fused = nh_transform_linear(nh_concated)
         # [B, N, m, hidden_dim]
 
@@ -907,6 +919,221 @@ class GNNV9_max(DFAProcessor):
         updated_hidden = update_linear(aggregated_nh)
         return updated_hidden
 
+class GNNV10_max(DFAProcessor):
+    def __init__(self, name: str = 'gnn_v10_max'):
+        super(GNNV10_max, self).__init__(name=name)
+
+    def __call__(self, cfg_indices_padded: _chex_Array,  # [B, E, 2],
+                 hidden: _chex_Array,  # [B, N, m, hidden_dim]
+                 node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+                 edge_fts: _chex_Array,  # [B, E, hidden_dim]
+                 ):
+        # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
+        _, nb_nodes, nb_ip, hidden_dims = node_fts.shape
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        nh_concated = jnp.concatenate([node_fts, hidden], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        nh_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+        # [B, N, m, hidden_dim]
+
+        # cancel the independence requirement in aggregator
+        tmp_agg = jnp.mean(nh_fused, axis=-2, keepdims=True)
+        # [B, N, 1, hidden_dim]
+        tmp_agg = jnp.broadcast_to(tmp_agg, shape=tmp_agg.shape[:2]+(nb_ip,)+(tmp_agg.shape[-1],))
+        nh_fused = jnp.concatenate([nh_fused, tmp_agg], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        tmp_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+        # [B, N, m, hidden_dim]
+
+        nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
+        #   [B, 2E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)  # w: [hidden_dim, 1]; b: [1, ]
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, 2E, hidden_dim] -> [B, 2E, 1]
+
+        nh_sources = jnp.expand_dims(edge_coeff, axis=-1) * nh_sources
+
+        # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_max_batched(data,  # [E, m, hidden_dim]
+                                 segment_ids  # [E, ]
+                                 ):
+            return jax.ops.segment_max(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes)
+
+        aggregated_nh = _segment_max_batched(data=nh_sources,
+                                             segment_ids=edge_indices_target)
+        #   [B, N, m, hidden_dim]
+        update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
+
+        # cancel the independence requirement in update
+        tmp_update = jnp.mean(aggregated_nh, axis=-2, keepdims=True)
+        # [B, N, 1, hidden_dim]
+        tmp_update = jnp.broadcast_to(tmp_update, shape=tmp_update.shape[:2]+(nb_ip,)+(tmp_update.shape[-1],))
+        concated = jnp.concatenate([aggregated_nh, tmp_update], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        # tmp_transform_linear_2 = hk.Linear(hidden_dims)
+        # aggregated_nh = nh_transform_linear_2(concated)
+        # [B, N, m, hidden_dim]
+
+        updated_hidden = update_linear(concated)
+        return updated_hidden
+
+class GNNV11_max(DFAProcessor):
+    def __init__(self, name: str = 'gnn_v11_max'):
+        super(GNNV11_max, self).__init__(name=name)
+
+    def __call__(self, cfg_indices_padded: _chex_Array,  # [B, E, 2],
+                 hidden: _chex_Array,  # [B, N, m, hidden_dim]
+                 node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+                 edge_fts: _chex_Array,  # [B, E, hidden_dim]
+                 ):
+        # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
+        _, nb_nodes, nb_ip, hidden_dims = node_fts.shape
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        nh_concated = jnp.concatenate([node_fts, hidden], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        nh_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+        # [B, N, m, hidden_dim]
+
+        # cancel the independence requirement in aggregator
+        # Linear_Q_agg = hk.Linear(hidden_dims) 
+        # Linear_K_agg = hk.Linear(hidden_dims)
+        # Linear_V_agg = hk.Linear(hidden_dims)
+        # Q_agg = Linear_Q_agg(nh_fused)  # [B, N, m, hidden_dim]
+        # K_agg = Linear_K_agg(nh_fused)
+        # V_agg = Linear_V_agg(nh_fused)
+        # QK_agg = jnp.matmul(Q_agg, jnp.transpose(K_agg, (0 ,1, 3, 2))) / math.sqrt(hidden_dim)
+        # # [B, N, m, m]
+        # softmax_QK_agg = jax.nn.softmax(QK_agg)
+        # # [B, N, m, m]
+        # nh_fused = jnp.matmul(softmax_QK_agg, V_agg)
+        # # [B, N, m, h]
+
+        nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
+        #   [B, 2E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)  # w: [hidden_dim, 1]; b: [1, ]
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, 2E, hidden_dim] -> [B, 2E, 1]
+
+        nh_sources = jnp.expand_dims(edge_coeff, axis=-1) * nh_sources
+
+        # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_max_batched(data,  # [E, m, hidden_dim]
+                                 segment_ids  # [E, ]
+                                 ):
+            return jax.ops.segment_max(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes)
+
+        aggregated_nh = _segment_max_batched(data=nh_sources,
+                                             segment_ids=edge_indices_target)
+        #   [B, N, m, hidden_dim]
+        update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
+
+        # cancel the independence requirement in update
+        Linear_Q_update = hk.Linear(hidden_dims) 
+        Linear_K_update = hk.Linear(hidden_dims)
+        Linear_V_update = hk.Linear(hidden_dims)
+        Q_update = Linear_Q_update(aggregated_nh)  # [B, N, m, hidden_dim]
+        K_update = Linear_K_update(aggregated_nh)
+        V_update = Linear_V_update(aggregated_nh)
+        QK_update = jnp.matmul(Q_update, jnp.transpose(K_update, (0 ,1, 3, 2))) / math.sqrt(hidden_dims)
+        # [B, N, m, m]
+        softmax_QK_update = jax.nn.softmax(QK_update)
+        # [B, N, m, m]
+        # aggregated_nh = jnp.matmul(softmax_QK_update, V_update)
+        # # [B, N, m, h]
+        updated_hidden = jnp.matmul(softmax_QK_update, V_update)
+        # [B, N, m, h]
+    
+        # update_linear = hk.Linear(hidden_dims)
+        # updated_hidden = update_linear(aggregated_nh)
+        # # [B, N, m, hidden_dim]
+
+        return updated_hidden
+
+class GNNV12_max(DFAProcessor):
+    def __init__(self, name: str = 'gnn_v12_max'):
+        super(GNNV12_max, self).__init__(name=name)
+
+    def __call__(self, cfg_indices_padded: _chex_Array,  # [B, E, 2],
+                 hidden: _chex_Array,  # [B, N, m, hidden_dim]
+                 node_fts: _chex_Array,  # [B, N， m, hidden_dim]
+                 edge_fts: _chex_Array,  # [B, E, hidden_dim]
+                 ):
+        # print(f'dfa_processor line 49, hint_state: {hint_state.shape}')
+        _, nb_nodes, nb_ip, hidden_dims = node_fts.shape
+        edge_indices_source = cfg_indices_padded[..., 0]  # [B, 2E]
+        edge_indices_target = cfg_indices_padded[..., 1]
+
+        nh_concated = jnp.concatenate([node_fts, hidden], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        nh_transform_linear = hk.Linear(hidden_dims)
+        nh_fused = nh_transform_linear(nh_concated)
+        # [B, N, m, hidden_dim]
+
+        nh_sources = jnp.take_along_axis(arr=nh_fused,  # [B, N, m, hidden_dim]
+                                         indices=dfa_utils.dim_expand_to(edge_indices_source, nh_fused),
+                                         # [B, 2E, 1, 1]
+                                         axis=1)
+        #   [B, 2E, m, hidden_dim]
+
+        # get coefficient from edge_fts
+        edge_coeff_linear = hk.Linear(1)  # w: [hidden_dim, 1]; b: [1, ]
+        edge_coeff = edge_coeff_linear(edge_fts)
+        # [B, 2E, hidden_dim] -> [B, 2E, 1]
+
+        nh_sources = jnp.expand_dims(edge_coeff, axis=-1) * nh_sources
+
+        # [B, 2E, 1, 1] * [B, 2E, m, hidden_dim] -> [B, 2E, m, hidden_dim]
+
+        @jax.vmap
+        def _segment_max_batched(data,  # [E, m, hidden_dim]
+                                 segment_ids  # [E, ]
+                                 ):
+            return jax.ops.segment_max(data=data,
+                                       segment_ids=segment_ids,
+                                       num_segments=nb_nodes)
+
+        aggregated_nh = _segment_max_batched(data=nh_sources,
+                                             segment_ids=edge_indices_target)
+        #   [B, N, m, hidden_dim]
+        update_linear = hk.Linear(hidden_dims)  # w: [hidden_dim, hidden_dim]; b: [hidden_dim]
+
+        # cancel the independence requirement in update
+        tmp_update = jnp.mean(aggregated_nh, axis=-2, keepdims=True)
+        # [B, N, 1, hidden_dim]
+        tmp_update = jnp.broadcast_to(tmp_update, shape=tmp_update.shape[:2]+(nb_ip,)+(tmp_update.shape[-1],))
+        concated = jnp.concatenate([aggregated_nh, tmp_update], axis=-1)
+        # [B, N, m, 2 * hidden_dim]
+        # tmp_transform_linear_2 = hk.Linear(hidden_dims)
+        # aggregated_nh = nh_transform_linear_2(concated)
+        # [B, N, m, hidden_dim]
+
+        updated_hidden = update_linear(concated)
+        return updated_hidden
 
 DFAProcessorFactory = Callable[[int], DFAProcessor]
 
@@ -965,9 +1192,22 @@ def get_dfa_processor_factory(kind: str,
                 processor = GNNV8_min()
             else:
                 raise ValueError('Unexpected aggregator: ' + aggregator)
+        elif kind == 'gnn_v9':
+            assert aggregator == 'max'
+            processor = GNNV9_max()
+        elif kind == 'gnn_v10':
+            assert aggregator == 'max'
+            processor = GNNV10_max()
+        elif kind == 'gnn_v11':
+            assert aggregator == 'max'
+            processor = GNNV11_max()
+        elif kind == 'gnn_v12':
+            assert aggregator == 'max'
+            processor = GNNV12_max()
         else:
             raise ValueError('Unexpected processor kind ' + kind)
 
         return processor
 
     return _dfa_factory
+

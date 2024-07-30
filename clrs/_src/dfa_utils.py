@@ -366,7 +366,7 @@ class SampleLoader:
         if sample_id in self.sample_path_processor.errored_sample_ids:
             raise DFAException(DFAException.RECORDED_ERRORED_SAMPLE, sample_id)
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(5)
+        signal.alarm(20)
         try:
             cpp_out, cpperror = programl.yzd_analyze(task_name=_get_analyze_task_name(task_name),
                                                      max_iteration=self.max_iteration,
