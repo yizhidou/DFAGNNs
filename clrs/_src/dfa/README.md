@@ -2,8 +2,6 @@
 
 GNN models aligned with the Data-flow analysis (DFA) algorithm. 
 
-<img src="architecture_formula.pdf" alt="Alt text" style="zoom:60%;" />
-
 Please note that this project is developed based on [The CLRS Algorithmic Reasoning Benchmark](https://github.com/google-deepmind/clrs) . Therefore their original code is also kept. All the code for our experiments is under the dfa/ directory. Please check `dfa_processors.py` for the specific implementations of DFA-GNN+, DFA-GNN, and DFA-GNN-.
 
 - Dataset
