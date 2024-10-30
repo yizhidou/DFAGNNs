@@ -63,44 +63,20 @@ def parse_train_params(params_hash: str,
         cfg_edges_rate=params_dict['train_sample_loader']['cfg_edges_rate'],
         sample_ids=candi_sample_id_list)
     del params_dict['dfa_sampler']['train_sample_id_savepath']
-    if params_dict['train_sample_loader']['dfa_version'] == 0:
-        # params_dict['vali_sample_loader']['dfa_version'] = 0
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa']]
-        params_dict['dfa_net']['dfa_version'] = 0
-    elif params_dict['train_sample_loader']['dfa_version'] == 1:
-        # params_dict['vali_sample_loader']['dfa_version'] = 1
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v1']]
-        params_dict['dfa_net']['dfa_version'] = 1
-    elif params_dict['train_sample_loader']['dfa_version'] == 2:
-        # params_dict['vali_sample_loader']['dfa_version'] = 2
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v2']]
-        params_dict['dfa_net']['dfa_version'] = 2
-    elif params_dict['train_sample_loader']['dfa_version'] == 3:
-        # params_dict['vali_sample_loader']['dfa_version'] = 2
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v3']]
-        params_dict['dfa_net']['dfa_version'] = 3
-    elif params_dict['train_sample_loader']['dfa_version'] == 4:
-        # params_dict['vali_sample_loader']['dfa_version'] = 2
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['dfa_v4']]
-        params_dict['dfa_net']['dfa_version'] = 4
-    else:
-        assert params_dict['train_sample_loader']['dfa_version'] is None
-        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS[params_dict['task']['task_name']]]
-        params_dict['dfa_net']['dfa_version'] = None
-        params_dict['processor']['activation'] = dfa_utils._get_activation(params_dict['processor']['activation_name'])
-        del params_dict['processor']['activation_name']
+
     params_dict['baseline_model']['checkpoint_path'] = os.path.join(params_dict['baseline_model']['checkpoint_path'],
                                                                     f'{params_hash}_ckpt')
     if not os.path.isdir(params_dict['baseline_model']['checkpoint_path']):
         os.system('mkdir {}'.format(params_dict['baseline_model']['checkpoint_path']))
     if params_dict['processor']['kind'] == 'DFAGNN_plus':
         params_dict['baseline_model']['plus_or_others'] = 'plus'
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['plus']]
     elif params_dict['processor']['kind'] in ['DFAGNN', 'DFAGNN_minus']:
         params_dict['baseline_model']['plus_or_others'] = 'others'
+        params_dict['dfa_net']['spec'] = [dfa_specs.DFASPECS['others']]
     else:
         print('unrecognized version of GNN_kind!')
         raise dfa_utils.DFAException(dfa_utils.DFAException.UNRECOGNIZED_GNN_TYPE)
-    assert params_dict['dfa_net']['dfa_version'] in ['plus', 'others']
     if 'just_one_layer' in params_dict['dfa_net'] and params_dict['dfa_net']['just_one_layer']:
         assert params_dict['train_sample_loader']['expected_trace_len'] == 2
     if not 'exclude_trace_loss' in params_dict['dfa_net']:

@@ -109,7 +109,6 @@ class SampleLoader:
                  min_num_pp: Optional[int],
                  # use_self_loops: bool,
                  trace_sample_from_start: bool,
-                 dfa_version: Optional[int],
                  # for_get_statistics: bool = False,
                  if_idx_reorganized: bool = True,
                  selected_ip_fixed: bool = False
@@ -130,7 +129,6 @@ class SampleLoader:
             self.max_iteration = 500
         else:
             self.max_iteration = self.expected_trace_len - 1
-        self.dfa_version = dfa_version
 
         self.if_idx_reorganized = if_idx_reorganized
         self.selected_ip_fixed = selected_ip_fixed
@@ -518,7 +516,6 @@ def new_get_statistics_from_dataset(sourcegraph_dir: str,
                                  cfg_edges_rate=1.5,
                                  selected_num_ip=5,
                                  # for_get_statistics=True,
-                                 # dfa_version=0,
                                  # use_self_loops=True,
                                  if_sync=True,
                                  trace_sample_from_start=True,

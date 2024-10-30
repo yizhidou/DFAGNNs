@@ -53,7 +53,8 @@ def validate(vali_params_savedir: str,
         sourcegraph_dir=vali_params_dict['sample_path_processor']['sourcegraph_dir'],
         errorlog_savepath=vali_params_dict['sample_path_processor']['errorlog_savepath'])
     rng = np.random.RandomState(seed=vali_params_dict['random_seed'])
-    vali_params_dict['vali_sample_loader']['dfa_version'] = train_params_dict['train_sample_loader']['dfa_version']
+    vali_params_dict['vali_sample_loader']['selected_ip_fixed'] = False
+    vali_params_dict['vali_sample_loader']['trace_sample_from_start'] = False
     vali_sample_loader = dfa_utils.SampleLoader(sample_path_processor=sample_path_processor,
                                                 seed=rng.randint(2 ** 32),
                                                 **vali_params_dict['vali_sample_loader'])
@@ -225,7 +226,7 @@ def validate(vali_params_savedir: str,
             # else:
             #     print('dfa_train line 150, unrecognized task_name!!')
             #     assert False
-            if if_log and vali_batch_idx % 500 == 0:
+            if if_log and vali_batch_idx % 50 == 0:
                 with open(vali_log_savepath, 'a') as log_recorder:
                     log_recorder.write(log_str)
                 del log_str
