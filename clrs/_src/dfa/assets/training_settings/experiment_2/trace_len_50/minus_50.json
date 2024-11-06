@@ -1,0 +1,51 @@
+{
+   "task": {
+      "task_name": "mix",
+      "seed": 42,
+      "nb_epochs": 100,
+      "num_samples_train_set": 100
+   },
+   "log": {
+      "log_savedir": "/data_hdd/lx20/yzd_workspace/Logs/TrainLogs/poj104_TrainLogs",
+      "full_statistics_filepath": "workspace/Datasets/Statistics/poj104_Statistics/poj104_full_statistics.json"
+   },
+   "sample_path_processor": {
+      "sourcegraph_dir": "workspace/Datasets/ProgramlDatasetUnzip/dataflow/graphs",
+      "errorlog_savepath": "workspace/Logs/ErrorLogs/poj104_errors_max500.txt"
+   },
+   "train_sample_loader": {
+      "expected_trace_len": 51,
+      "max_num_pp": 50,
+      "min_num_pp": 0,
+      "cfg_edges_rate": 1.5,
+      "selected_num_ip": 5,
+      "trace_sample_from_start": false,
+      "if_sync": true
+   },
+   "dfa_sampler": {
+      "train_sample_id_savepath": "workspace/Datasets/SampleIds/poj_104/sample_ids.txt",
+      "batch_size": 1
+   },
+   "dfa_net": {
+      "hidden_dim": 32,
+      "encode_hints": true,
+      "decode_hints": true,
+      "encoder_init": "default",
+      "use_lstm": false,
+      "dropout_prob": 0.1,
+      "exclude_trace_loss": false,
+      "hint_teacher_forcing": 0.9,
+      "hint_repred_mode": "hard",
+      "take_hint_as_outpt": true
+   },
+   "baseline_model": {
+      "learning_rate": 0.005,
+      "grad_clip_max_norm": 0,
+      "checkpoint_path": "workspace/SavedModels/poj104_CKPT",
+      "freeze_processor": false
+   },
+   "processor": {
+      "kind": "DFAGNN_minus",
+      "aggregator": "max"
+   }
+}

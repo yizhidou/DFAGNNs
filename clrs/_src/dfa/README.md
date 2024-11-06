@@ -16,22 +16,19 @@ This paper employs the public dataset from [ProGraML Dataset](https://github.com
 
 All the models are trained on small samples and validated/tested on larger ones (measured by statement count). Therefore the disjointness of train/validation/test sets is achieved by controling the maximum and minimum statement count of the samples in the training/testing setting files (`max_num_pp` and `min_num_pp`).
 
-- **Validation/Testing Command**
-  - Set up the validation/testing params according to `demo_test_param.json` and run `python dfa_vali_test.py --params demo_test_param.json`
+### Training Settings
 
-## Training Settings
+This section lists all the setting file used for training. We organize these files by experiments after a brief introduction to their usage. 
 
-This section lists all the setting file used for training, and ~~some demo setting files used for testing~~. We organize these files by experiments after a brief introduction to their usage. 
+#### Usage
 
-### Usage
+Set up the missing fields of each file (e.g., `demo_train_args.json`), and run `python dfa_train.py --params_savedir *** --params demo_train_args.json`.
 
-Set up the missing fields of each file (e.g., `demo_train_args.json`), and run `python dfa_train.py --params demo_train_args.json`.
-
-### Experiment I
+#### Experiment I
 
 Train models under two modes (with or without trajectory supervision).
 
-All the training setting files of this experiment are under directory `training_settings/experiment_1/`
+All the training setting files of this experiment are under directory `assets/training_settings/experiment_1/`
 
 - **w/o trajectory supervision**
   - DFA-GNN+
@@ -48,11 +45,11 @@ All the training setting files of this experiment are under directory `training_
   - DFA-GNN-
     - `with_trajectory/minus_w.json`
 
-### Experiment II
+#### Experiment II
 
 Train models with various trajectory-length (50, 10, 5, 1).
 
-All the training setting files of this experiment are under directory `training_settings/experiment_2/`
+All the training setting files of this experiment are under directory `assets/training_settings/experiment_2/`
 
 - `trajectory_len = 50`
   - DFA-GNN+
@@ -83,11 +80,11 @@ All the training setting files of this experiment are under directory `training_
   - DFA-GNN-
     - training arguments: `trace_len_1/minus_1_full.json`
 
-### Experiment III
+#### Experiment III
 
 Train models with various numbers of samples (1, 10, 100, 1000, full)
 
-All settings of this experiment are under directory `training_settings/experiment_3/`
+All settings of this experiment are under directory `assets/training_settings/experiment_3/`
 
 To generate means and standard deviations of the model performances, each training set with 1, 10, 100, or 1000 samples has 3 different versions, corresponding to `v1`, `v2`, and `v3` settings. For the full training set, we change the random seeds instead.
 
@@ -127,11 +124,11 @@ To generate means and standard deviations of the model performances, each traini
   - DFA-GNN-
     - training arguments: `train_set_size_full/minus_full_v1.json`, `train_set_size_full/minus_full_v2.json`, `train_set_size_full/minus_full_v3.json`
 
-### Experiment IV
+#### Experiment IV
 
 Train models on various projects (POJ104, GitHub, Linux, TensorFlow)
 
-All settings of this experiment are under directory `training_settings/experiment_4/`
+All settings of this experiment are under directory `assets/training_settings/experiment_4/`
 
 - POJ104
   - DFA-GNN+
@@ -161,4 +158,36 @@ All settings of this experiment are under directory `training_settings/experimen
     - `tensorflow/gnn_tensorflow.json`
   - DFA-GNN-
     - `tensorflow/minus_tensorflow.json`
+
+### Testing Settings
+
+This section lists **some demo** setting files used for testing. We organize these files by testing projects after a brief introduction to their usage. All settings of this experiment are under directory `assets/test_settings_demo/`
+
+#### Usage
+
+After an execution of a specific training process, the training setting file will be renamed according to its 64-bit hash value. After setting this hash value into the `train_params_id` filed of a demo testing setting and run `python dfa_vali_or_test.py --params_savedir *** --params demo_test_args.json --ckpt_idx *`.
+
+Then the model trained under the corresponding training setting will be tested on the specified project.
+
+#### Demo Test Setting Files
+
+- Test on POJ-104
+  - POJ-104/500/600: `test_on_poj104_500_600.json`
+  - POJ-104/600/700: `test_on_poj104_600_700.json`
+  - POJ-104/700/800: `test_on_poj104_700_800.json`
+  - POJ-104/800/900: `test_on_poj104_800_900.json`
+  - POJ-104/900/1000: `test_on_poj104_900_1000.json`
+- Test on GitHub
+  - GitHub/500/600: `test_on_github_500_600.json`
+- Test on Linux
+  - Linux/500/600: `test_on_linux_500_600.json`
+- Test on TensorFlow
+  - TensorFlow/500/600: `test_on_tf_500_600.json`
+
+### Other Required Files
+
+- **Dataset Information**. Recording mainly the statement count of each sample. Required for filtering samples based on statement counts. Stored under `assets/required_files/Datasets/Statistics/`
+  - `poj104_Statistics/poj104_full_statistics.json`,  `github_Statistics/github_full_statistics.json`,  `linux_Statistics/linux_full_statistics.json`,  and `tensorflow_Statistics/tensorflow_full_statistics.json`,  
+- **Errored Samples**. Recording the errored samples. Required for avoiding processing the errored samples over and over again. Stored under `assets/required_files/Datasets/Statistics/Logs/ErrorLogs/`
+  - `poj104_errors_max500.txt`, `github_errors_max500.txt`, `linux_errors_max500.txt`, and `tensorflow_errors_max500.txt`,
 
