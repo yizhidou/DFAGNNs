@@ -4,7 +4,7 @@
 
 GNN models aligned with the Data-flow analysis (DFA) algorithm. 
 
-Please note that this project is developed based on [The CLRS Algorithmic Reasoning Benchmark](https://github.com/google-deepmind/clrs) . Therefore their original code is also kept. All the code for our experiments is under the `clrs/_src/dfa` directory. Please check `clrs/_src/dfa/dfa_processors.py` for the specific implementations of DFA-GNN+, DFA-GNN, and DFA-GNN-.
+Please note that this project is developed based on [The CLRS Algorithmic Reasoning Benchmark](https://github.com/google-deepmind/clrs) . Therefore their original code is kept. All the code for our experiments is under the `clrs/_src/dfa` directory. Please check `clrs/_src/dfa/dfa_processors.py` for the specific implementations of DFA-GNN+, DFA-GNN, and DFA-GNN-.
 
 <img src="assets/images/overview.png" alt="overview" style="zoom:50%;" />
 
@@ -28,7 +28,9 @@ Set up the missing fields of each file (e.g., `demo_train_args.json`), and run `
 
 Train models under two modes (with or without trajectory supervision).
 
-All the training setting files of this experiment are under directory `assets/training_settings/experiment_1/`
+All the training setting files of this experiment are under directory `assets/training_settings/experiment_1/`.
+
+The detailed experiment results (reported by each task) is in `assets/DetailedExperimentResults/`
 
 - **w/o trajectory supervision**
   - DFA-GNN+
